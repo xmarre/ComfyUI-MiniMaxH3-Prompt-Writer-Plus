@@ -1,4 +1,6 @@
-# ComfyUI MiniMax H3 Prompt Writer
+# ComfyUI MiniMax H3 Prompt Writer-Plus
+
+> **Plus fork:** This is the `xmarre` maintained Plus fork of [duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer](https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer). It preserves the upstream project's foundation while carrying additional features, integrations, fixes, and behavior that may intentionally diverge from upstream.
 
 <p align="center">
   <img src="web/assets/h3-prompt-writer-launcher.svg" width="96" alt="H3 Prompt Writer">

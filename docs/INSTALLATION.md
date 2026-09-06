@@ -15,7 +15,7 @@ Find **MiniMax H3 Prompt Writer** in ComfyUI Manager, install it, and restart Co
 Open a terminal in `ComfyUI/custom_nodes` and run:
 
 ```powershell
-git clone https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer.git
+git clone https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus.git ComfyUI-MiniMaxH3-Prompt-Writer
 ```
 
 ### ZIP

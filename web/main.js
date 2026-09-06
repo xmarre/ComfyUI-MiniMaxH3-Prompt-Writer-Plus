@@ -31,8 +31,8 @@ import { autoVramControlMarkup, createVramHandoffCoordinator, installVramHandoff
 const EXTENSION_NAME = "minimax.h3.prompt.studio";
 const VRAM_HANDOFF_SUPPORTED = typeof app?.queuePrompt === "function";
 const vramHandoffCoordinator = createVramHandoffCoordinator();
-const INSTALLATION_GUIDE_URL = "https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer/blob/main/docs/INSTALLATION.md";
-const TROUBLESHOOTING_GUIDE_URL = "https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer/blob/main/docs/TROUBLESHOOTING.md";
+const INSTALLATION_GUIDE_URL = "https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus/blob/main/docs/INSTALLATION.md";
+const TROUBLESHOOTING_GUIDE_URL = "https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus/blob/main/docs/TROUBLESHOOTING.md";
 const MUSIC3_GUIDE_URL = "https://github.com/MiniMax-AI/MiniMax-Music3/tree/main/skills/music-caption-rewriter";
 const ASPECT_RATIOS = [
   ["1:1", "Square"], ["2:3", "Portrait"], ["3:2", "Landscape"], ["3:4", "Portrait"],
