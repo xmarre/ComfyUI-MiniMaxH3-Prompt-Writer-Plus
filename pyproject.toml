@@ -10,11 +10,11 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer"
-Documentation = "https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer#readme"
-"Bug Tracker" = "https://github.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer/issues"
+Repository = "https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus"
+Documentation = "https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus#readme"
+"Bug Tracker" = "https://github.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus/issues"
 
 [tool.comfy]
 PublisherId = "duckyshell"
 DisplayName = "H3 Prompt Writer"
-Icon = "https://raw.githubusercontent.com/duckyshell/ComfyUI-MiniMaxH3-Prompt-Writer/main/web/assets/h3-prompt-writer-launcher.svg"
+Icon = "https://raw.githubusercontent.com/xmarre/ComfyUI-MiniMaxH3-Prompt-Writer-Plus/main/web/assets/h3-prompt-writer-launcher.svg"
