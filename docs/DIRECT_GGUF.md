@@ -14,7 +14,7 @@ This is an optional advanced path. Most users should start with [Ollama](OLLAMA.
 - One supported model GGUF.
 - For image and video-reference modes, the matching multimodal projector (`mmproj`) from the same model class.
 
-A model without an active projector remains usable as text-only Direct GGUF. Writer keeps T2VA and Refine available, disables I2VA, FL2VA, L2VA, Reference, and Music 3, and shows why vision is unavailable.
+A model without an active projector remains usable as text-only Direct GGUF. Writer keeps T2VA available and also permits H3 Continuum I2VA, FL2VA, L2VA, or Reference when all visual conditioning comes from the selected V3.4 workflow and Prompt Writer sends no image/video pixels. Chunk-local Continuum Refine is also text-only because it does not re-upload the original analysis media. Ordinary visual I2VA/FL2VA/L2VA/Reference requests and Music 3 remain unavailable on this Direct model.
 
 Workflow safetensors, checkpoints, and text encoders are unrelated to the Direct prompt model.
 
@@ -23,7 +23,7 @@ Workflow safetensors, checkpoints, and text encoders are unrelated to the Direct
 Open PowerShell or Command Prompt in the ComfyUI Portable folder that contains `python_embeded`, then run:
 
 ```powershell
-.\python_embeded\python.exe -m pip install --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130 "llama-cpp-python>=0.3.35,<0.4"
+.\python_embeded\python.exe -m pip install --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130 "llama-cpp-python==0.3.35"
 ```
 
 Restart ComfyUI and open **H3 Prompt Writer > Settings > Direct GGUF**. Settings shows a supported installed package as **Runtime detected**.
@@ -61,7 +61,7 @@ ComfyUI/models/LLM/
     └── mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
 ```
 
-Do not share a projector across incompatible model classes because the filenames happen to match. Writer reads the GGUF metadata to distinguish models from projectors, so a projector does not need `mmproj` in its filename. The filename is only an Extension compatibility hint when metadata cannot be read. Writer enables vision only when it finds one metadata-compatible projector for a model. A missing or ambiguous projector does not hide the model; it leaves the model available in text-only T2VA mode and reports the pairing problem in Direct settings and Scan details.
+Do not share a projector across incompatible model classes because the filenames happen to match. Writer reads the GGUF metadata to distinguish models from projectors, so a projector does not need `mmproj` in its filename. The filename is only an Extension compatibility hint when metadata cannot be read. Writer enables vision only when it finds one metadata-compatible projector for a model. A missing or ambiguous projector does not hide the model; it leaves text-only T2VA plus workflow-only H3 Continuum available and reports the pairing problem in Direct settings and Scan details.
 
 Select **Refresh** after adding files. Expand **Scan details** if the model does not appear.
 
@@ -135,7 +135,7 @@ If an update replaces `python_embeded` or leaves mixed native packages, reinstal
 
 ```powershell
 .\python_embeded\python.exe -m pip uninstall llama-cpp-python -y
-.\python_embeded\python.exe -m pip install --no-cache-dir --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130 "llama-cpp-python>=0.3.35,<0.4"
+.\python_embeded\python.exe -m pip install --no-cache-dir --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130 "llama-cpp-python==0.3.35"
 ```
 
 Restart ComfyUI and confirm that Direct reports **Runtime detected**, then complete one real Direct generation. Do not copy native DLLs manually, replace ComfyUI's Python files, or install the package into an unrelated system Python.
