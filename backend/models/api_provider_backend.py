@@ -19,6 +19,7 @@ from ..context import (
     estimate_text_tokens,
     non_thinking_output_tokens,
 )
+from ..continuum_schema import continuum_plan_json_schema
 from ..h3_pipeline import run_h3_pipeline, validate_media_capabilities
 from ..version import VERSION
 from .contract import ModelError
@@ -158,6 +159,55 @@ class ApiConnection:
     connection_verified: bool = False
 
 
+def _uses_lm_studio_continuum_structured_output(
+    *,
+    preset: str,
+    compatibility_profile: str,
+    assembled: dict[str, Any],
+) -> bool:
+    request_input = assembled.get("input", {})
+    return (
+        preset == "custom"
+        and compatibility_profile == "lm_studio"
+        and request_input.get("generation_target") == "continuum"
+        and request_input.get("continuum_stage") in {"plan", "plan_repair"}
+    )
+
+
+def _lm_studio_continuum_response_format(
+    connection: ApiConnection,
+    assembled: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _uses_lm_studio_continuum_structured_output(
+        preset=connection.preset,
+        compatibility_profile=connection.compatibility_profile,
+        assembled=assembled,
+    ):
+        return None
+    request_input = assembled.get("input", {})
+    settings = request_input.get("continuum")
+    if not isinstance(settings, dict):
+        raise ModelError(
+            "INVALID_CONTINUUM_SETTINGS",
+            "Continuum planner structured output requires validated Continuum settings.",
+        )
+    try:
+        schema = continuum_plan_json_schema(settings)
+    except ValueError as error:
+        raise ModelError(
+            "INVALID_CONTINUUM_SETTINGS",
+            "Continuum planner structured output requires a valid chunk count.",
+        ) from error
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "h3_continuum_plan_v2",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
 class _ApiChatHandler:
     def __init__(self, backend: "ApiProviderBackend", connection: ApiConnection, model_id: str) -> None:
         self.backend = backend
@@ -174,6 +224,7 @@ class _ApiChatHandler:
         max_tokens: int,
         seed: int | None,
         thinking: bool,
+        response_format: dict[str, Any] | None = None,
         **_unused: Any,
     ) -> dict[str, Any]:
         del top_k, seed
@@ -182,6 +233,8 @@ class _ApiChatHandler:
             "messages": messages,
             "stream": True,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         preset = self.connection.preset
         if preset in {"openai", "gemini", "openrouter"}:
             payload["stream_options"] = {"include_usage": True}
@@ -207,7 +260,9 @@ class _ApiChatHandler:
         elif thinking and preset == "openrouter":
             payload["reasoning"] = {"enabled": True, "exclude": True}
         elif preset == "custom" and self.connection.compatibility_profile == "lm_studio":
-            payload["reasoning_effort"] = "low" if thinking else "none"
+            # LM Studio/Qwen reasoning can route constrained JSON into reasoning_content.
+            # Structured Continuum planning therefore runs as an explicit non-thinking request.
+            payload["reasoning_effort"] = "none" if response_format is not None else ("low" if thinking else "none")
         return self.backend._request_chat_completion_stream(self.connection, payload)
 
 
@@ -486,6 +541,7 @@ class ApiProviderBackend:
             "externally_managed": True,
             "api_connection_id": connection.id,
             "api_preset": connection.preset,
+            "api_compatibility_profile": connection.compatibility_profile,
             "endpoint": connection.base_url,
             "remote_model": model_id,
             "source_label": f"{PRESETS[connection.preset]['name']} · API provider",
@@ -493,7 +549,8 @@ class ApiProviderBackend:
         }
 
     def _local_custom_model_metadata(self, connection: ApiConnection) -> dict[str, dict[str, Any]]:
-        if connection.preset != "custom" or not _is_loopback(urlsplit(connection.base_url).hostname or ""):
+        hostname = urlsplit(connection.base_url).hostname or ""
+        if connection.preset != "custom" or not (_is_loopback(hostname) or _is_private_lan(hostname)):
             return {}
         try:
             data, _headers = self._request_json(connection, "GET", "/api/v1/models")
@@ -671,7 +728,13 @@ class ApiProviderBackend:
                 "API_RUNTIME_MANAGED",
                 "Context and KV cache are managed by the API provider. Set both options to Auto.",
             )
-        if thinking and model_info.get("thinking") is not True:
+        structured_planner = _uses_lm_studio_continuum_structured_output(
+            preset=str(model_info.get("api_preset") or ""),
+            compatibility_profile=str(model_info.get("api_compatibility_profile") or "generic"),
+            assembled=assembled,
+        )
+        effective_thinking = False if structured_planner else thinking
+        if effective_thinking and model_info.get("thinking") is not True:
             raise ModelError("API_THINKING_UNAVAILABLE", "This provider model does not report reasoning controls.")
         visual_input_count = sum(
             1 for item in assembled.get("media_inputs", []) if item.get("type") in {"image", "video"}
@@ -689,12 +752,12 @@ class ApiProviderBackend:
             estimated_input_tokens + THINKING_OUTPUT_TOKENS + CONTEXT_SAFETY_TOKENS,
         )
         standard_output_tokens = non_thinking_output_tokens(assembled)
-        desired_output = THINKING_OUTPUT_TOKENS if thinking else standard_output_tokens
+        desired_output = THINKING_OUTPUT_TOKENS if effective_thinking else standard_output_tokens
         provider_max_output = model_info.get("max_output_tokens")
         if isinstance(provider_max_output, int) and provider_max_output > 0:
             desired_output = min(desired_output, provider_max_output)
         available_output = context_tokens - estimated_input_tokens - CONTEXT_SAFETY_TOKENS
-        minimum_output = MINIMUM_OUTPUT_TOKENS if thinking else desired_output
+        minimum_output = MINIMUM_OUTPUT_TOKENS if effective_thinking else desired_output
         if available_output < minimum_output:
             raise ModelError(
                 "CONTEXT_BUDGET_EXCEEDED",
@@ -712,13 +775,13 @@ class ApiProviderBackend:
             "context_tokens": context_tokens,
             "requested_kv_cache": "auto",
             "kv_cache": "provider",
-            "thinking": thinking,
+            "thinking": effective_thinking,
             "estimated_text_tokens": estimated_text_tokens,
             "estimated_input_tokens": estimated_input_tokens,
             "visual_input_count": visual_input_count,
             "max_output_tokens": max_output_tokens,
             "reserved_output_tokens": max_output_tokens + CONTEXT_SAFETY_TOKENS,
-            "thinking_budget_reduced": thinking and max_output_tokens < THINKING_OUTPUT_TOKENS,
+            "thinking_budget_reduced": effective_thinking and max_output_tokens < THINKING_OUTPUT_TOKENS,
             "context_limit_known": known_context is not None,
         }
 
@@ -739,6 +802,12 @@ class ApiProviderBackend:
         with self._connection_lock:
             self._connection = http_connection
         content_parts: list[str] = []
+        structured_reasoning_parts: list[str] = []
+        structured_output_request = (
+            connection.compatibility_profile == "lm_studio"
+            and isinstance(payload.get("response_format"), dict)
+            and payload["response_format"].get("type") == "json_schema"
+        )
         finish_reason: str | None = None
         usage: dict[str, Any] = {}
         usage_source = "missing"
@@ -759,7 +828,22 @@ class ApiProviderBackend:
                     data = json.loads(raw.decode("utf-8")) if raw else {}
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     data = {}
-                raise self._http_error(connection.preset, response.status, data, response_headers)
+                provider_error = self._http_error(connection.preset, response.status, data, response_headers)
+                response_format = payload.get("response_format")
+                if (
+                    connection.compatibility_profile == "lm_studio"
+                    and isinstance(response_format, dict)
+                    and response_format.get("type") == "json_schema"
+                    and provider_error.code == "API_INVALID_REQUEST"
+                ):
+                    details = dict(provider_error.details or {})
+                    details["structured_output"] = "json_schema"
+                    raise ModelError(
+                        "API_STRUCTURED_OUTPUT_REJECTED",
+                        "LM Studio rejected the Continuum planner structured-output request.",
+                        details,
+                    ) from provider_error
+                raise provider_error
             while True:
                 if self.cancel_event.is_set():
                     raise ModelError("GENERATION_CANCELLED", "Generation was cancelled.")
@@ -806,6 +890,16 @@ class ApiProviderBackend:
                     for part in text:
                         if isinstance(part, dict) and isinstance(part.get("text"), str):
                             content_parts.append(part["text"])
+                if structured_output_request:
+                    # LM Studio currently has Qwen reasoning-model cases where the JSON-schema
+                    # grammar is applied to the separated reasoning stream and content stays empty.
+                    # Capture that provider field only for constrained planner requests; promote it
+                    # below only when it is itself complete JSON.
+                    reasoning_text = delta.get("reasoning_content")
+                    if not isinstance(reasoning_text, str):
+                        reasoning_text = delta.get("reasoning")
+                    if isinstance(reasoning_text, str):
+                        structured_reasoning_parts.append(reasoning_text)
                 if choice.get("finish_reason") is not None:
                     finish_reason = str(choice["finish_reason"])
         except ModelError:
@@ -824,6 +918,14 @@ class ApiProviderBackend:
                     self._connection = None
             http_connection.close()
         content = "".join(content_parts)
+        if structured_output_request and not content.strip() and structured_reasoning_parts:
+            reasoning_candidate = "".join(structured_reasoning_parts).strip()
+            try:
+                json.loads(reasoning_candidate)
+            except json.JSONDecodeError:
+                pass
+            else:
+                content = reasoning_candidate
         if not usage:
             usage = {"prompt_tokens": 0, "completion_tokens": estimate_text_tokens(content)}
             usage_source = "estimated" if content else "missing"
@@ -866,9 +968,12 @@ class ApiProviderBackend:
                 if on_phase:
                     on_phase("loading_model")
                 handler = _ApiChatHandler(self, connection, model_info["remote_model"])
+                response_format = _lm_studio_continuum_response_format(connection, assembled)
+                structured_planner = response_format is not None
 
                 def complete(**kwargs: Any) -> dict[str, Any]:
                     kwargs.pop("purpose", None)
+                    kwargs["response_format"] = response_format
                     return handler(**kwargs)
 
                 result = run_h3_pipeline(
@@ -879,7 +984,7 @@ class ApiProviderBackend:
                     complete=complete,
                     count_text_tokens=lambda text: estimate_text_tokens(text) + 1,
                     is_cancelled=self.cancel_event.is_set,
-                    thinking=thinking,
+                    thinking=False if structured_planner else thinking,
                     seed=seed,
                     on_phase=on_phase,
                 )
