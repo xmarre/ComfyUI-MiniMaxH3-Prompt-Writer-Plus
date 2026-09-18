@@ -16,6 +16,7 @@ const LEGACY_CHUNK_HEADER = /^\s*\[\s*Chunk\s+(\d+)\s*\]\s*$/i;
 const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\]\s*$/i;
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
+const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
 const CONTINUUM_REFERENCE_INPUTS = Array.from({ length: 8 }, (_, offset) => `reference_image_${offset + 1}`);
 const CONDITIONING_ROLES = new Map([
   ["first_frame", { role: "first_frame", kind: "image" }],
@@ -1225,7 +1226,7 @@ function editableSequenceTextSource(node) {
   if (STATE_MANAGER_TEXT_BOX_NODE_IDS.has(classId)) {
     const stateControl = (node?.inputs || []).find((candidate) => candidate?.name === "state_control");
     if (stateControl?.link != null) {
-      return { status: "managed_source", node };
+      return { status: "managed_source", node, state_control_link: stateControl.link };
     }
     const textWidget = widget(node, "text");
     return textWidget ? { status: "connected", node, widget: textWidget } : null;
@@ -1250,7 +1251,17 @@ export function connectedSequenceTextSource(graph, sampler) {
       continue;
     }
     const sourceResult = editableSequenceTextSource(source);
-    if (sourceResult) return sourceResult;
+    if (sourceResult) {
+      if (sourceResult.status === "managed_source") {
+        const stateLink = graphLink(graph, sourceResult.state_control_link);
+        const manager = stateLink ? graphNode(graph, stateLink.origin_id) : null;
+        if (!manager || !STATE_MANAGER_NODE_IDS.has(nodeClassId(manager))) {
+          return { status: "managed_source_unavailable", node: source, reason: "invalid_state_manager_owner" };
+        }
+        return { ...sourceResult, manager };
+      }
+      return sourceResult;
+    }
     const stringInputs = (source.inputs || []).filter((candidate) => candidate?.type === "STRING" && candidate.link != null);
     const stringOutputs = (source.outputs || []).filter((candidate) => candidate?.type === "STRING");
     if (stringInputs.length !== 1 || stringOutputs.length !== 1) break;
@@ -1408,6 +1419,47 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
   }
 
   const source = connectedSequenceTextSource(app?.graph, sampler);
+  if (source.status === "managed_source") {
+    const managedApi = globalThis.__doraStateManagerPromptApi;
+    if (typeof managedApi?.setTextBox !== "function") {
+      const rollbackError = applyWidgetMutations(app, settingSnapshots);
+      return {
+        status: "managed_source_unavailable",
+        source,
+        sampler,
+        prompt,
+        settings,
+        settings_synced: false,
+        message: rollbackError
+          ? `State Manager prompt integration is unavailable; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          : "State Manager prompt integration is unavailable. Update ComfyUI-DoRA-Dynamic-LoRA-Loader to the managed-text integration build.",
+      };
+    }
+    return Promise.resolve(managedApi.setTextBox(source.manager, source.node, prompt))
+      .then((managedResult) => ({
+        status: "applied",
+        sampler,
+        source: source.node,
+        managed_source: true,
+        managed_result: managedResult,
+        prompt,
+        settings,
+        prompt_mode: CONTINUUM_PROMPT_MODE,
+        settings_synced: settingsMutations.length > 0,
+      }))
+      .catch((error) => {
+        const rollbackError = applyWidgetMutations(app, settingSnapshots);
+        const detail = rollbackError
+          ? `${error instanceof Error ? error.message : String(error)}; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          : (error instanceof Error ? error.message : String(error));
+        return {
+          status: "apply_failed",
+          sampler,
+          prompt,
+          message: detail,
+        };
+      });
+  }
   if (source.status !== "connected") {
     return {
       ...source,
