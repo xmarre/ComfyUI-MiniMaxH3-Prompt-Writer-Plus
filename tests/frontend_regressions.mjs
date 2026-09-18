@@ -595,7 +595,7 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   assert.equal(writes[0].textNode.type, "State Manager Text Box");
   assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
   assert.equal(textWidget.value, writes[0].value);
-  assert.match(mainSource, /State Manager integration is missing/);
+  assert.match(mainSource, /State Manager integration is missing or outdated/);
 });
 
 test("Continuum graph discovery compacts Reference Image gaps without counting keyframes", () => {
