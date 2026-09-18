@@ -526,6 +526,22 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 
+  globalThis.__doraStateManagerPromptApi = {
+    setTextBox() {
+      throw new Error("managed write failed");
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+  assert.equal(result.status, "apply_failed");
+  assert.match(result.message, /managed write failed/);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
   const writes = [];
   globalThis.__doraStateManagerPromptApi = {
     async setTextBox(manager, textNode, value) {
