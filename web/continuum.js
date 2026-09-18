@@ -17,8 +17,8 @@ const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
 const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
-const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 2;
-const STATE_MANAGER_PROMPT_CAPABILITY = "impact_wildcard_queue_bridge_v1";
+const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 3;
+const STATE_MANAGER_PROMPT_CAPABILITY = "backend_impact_prompt_bridge_v1";
 const CONTINUUM_REFERENCE_INPUTS = Array.from({ length: 8 }, (_, offset) => `reference_image_${offset + 1}`);
 const CONDITIONING_ROLES = new Map([
   ["first_frame", { role: "first_frame", kind: "image" }],
