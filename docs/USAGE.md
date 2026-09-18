@@ -11,7 +11,7 @@
 7. Select **Generate prompt**.
 8. Review or edit the generated prompt, then select **Copy prompt** and paste it into your H3 workflow.
 
-Prompt Writer creates text. It does not add nodes, modify the graph, or queue a video workflow.
+Ordinary prompt generation creates text only. **Apply to Continuum** may update the selected supported Continuum sampler settings and its connected editable Sequence Prompt source; it never adds or rewires nodes and never queues a video workflow.
 
 Use the fullscreen button in the Writer header when you want the workspace to fill the browser. Press Escape to leave fullscreen.
 
