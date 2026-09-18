@@ -17,8 +17,11 @@ const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
 const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
-const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 3;
-const STATE_MANAGER_PROMPT_CAPABILITY = "backend_impact_prompt_bridge_v1";
+const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 4;
+const STATE_MANAGER_PROMPT_CAPABILITIES = Object.freeze([
+  "backend_impact_prompt_bridge_v1",
+  "backend_persistent_text_write_v1",
+]);
 const CONTINUUM_REFERENCE_INPUTS = Array.from({ length: 8 }, (_, offset) => `reference_image_${offset + 1}`);
 const CONDITIONING_ROLES = new Map([
   ["first_frame", { role: "first_frame", kind: "image" }],
@@ -1427,12 +1430,12 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     const managedContractVersion = Number(managedApi?.contract_version) || 0;
     const managedContractReady = (
       managedContractVersion >= STATE_MANAGER_PROMPT_CONTRACT_VERSION
-      && managedCapabilities.includes(STATE_MANAGER_PROMPT_CAPABILITY)
+      && STATE_MANAGER_PROMPT_CAPABILITIES.every((capability) => managedCapabilities.includes(capability))
       && typeof managedApi?.setTextBox === "function"
     );
     if (!managedContractReady) {
       const rollbackError = applyWidgetMutations(app, settingSnapshots);
-      const requirement = `State Manager prompt integration contract v${STATE_MANAGER_PROMPT_CONTRACT_VERSION} with ${STATE_MANAGER_PROMPT_CAPABILITY}`;
+      const requirement = `State Manager prompt integration contract v${STATE_MANAGER_PROMPT_CONTRACT_VERSION} with ${STATE_MANAGER_PROMPT_CAPABILITIES.join(" + ")}`;
       return {
         status: "managed_source_unavailable",
         source,
@@ -1442,7 +1445,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
         settings_synced: false,
         required_contract_version: STATE_MANAGER_PROMPT_CONTRACT_VERSION,
         observed_contract_version: managedContractVersion,
-        required_capability: STATE_MANAGER_PROMPT_CAPABILITY,
+        required_capabilities: [...STATE_MANAGER_PROMPT_CAPABILITIES],
         observed_capabilities: managedCapabilities,
         message: rollbackError
           ? `${requirement} is unavailable or outdated; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
@@ -1457,7 +1460,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
         source: source.node,
         managed_source: true,
         managed_contract_version: managedContractVersion,
-        managed_capability: STATE_MANAGER_PROMPT_CAPABILITY,
+        managed_capabilities: [...STATE_MANAGER_PROMPT_CAPABILITIES],
         managed_result: managedResult,
         prompt,
         settings,
