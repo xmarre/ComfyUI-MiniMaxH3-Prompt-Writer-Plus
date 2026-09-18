@@ -635,6 +635,57 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   assert.match(mainSource, /State Manager integration is missing or outdated/);
 });
 
+test("managed Continuum Auto writes the canonical Timeline without a settings-sync round trip", async () => {
+  const { app, samplers, textWidget } = stateManagerContinuumGraph({
+    managed: true,
+    promptMode: "Auto",
+    chunks: 2,
+    chunkSeconds: 7,
+  });
+  const state = {
+    settings: { chunks: 2, chunk_seconds: 7 },
+    preamble: "Global.",
+    prompts: ["One", "Two"],
+  };
+  const writes = [];
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 4,
+    capabilities: [
+      "authoritative_persistent_text_v1",
+      "impact_wildcard_queue_bridge_v1",
+      "backend_impact_prompt_bridge_v1",
+      "backend_persistent_text_write_v1",
+    ],
+    async setTextBox(manager, textNode, value) {
+      writes.push({ manager, textNode, value });
+      textWidget.value = value;
+      return {
+        status: "updated",
+        role: "positive",
+        slot: "default",
+        persistent_verified: true,
+        library_revision: 9,
+      };
+    },
+  };
+
+  let result;
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state);
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+
+  assert.equal(result.status, "applied");
+  assert.equal(result.settings_synced, false);
+  assert.equal(result.prompt_mode, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.equal(textWidget.value, writes[0].value);
+});
+
+
 test("Continuum graph discovery compacts Reference Image gaps without counting keyframes", () => {
   const { app, samplers } = continuumGraph({
     referenceInputs: [
