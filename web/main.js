@@ -1461,20 +1461,29 @@ async function applyCurrentSequence(syncSettings = false) {
     );
     return;
   }
-  if (result.status === "unconnected" || result.status === "incompatible_source") {
+  if (["unconnected", "incompatible_source", "managed_source"].includes(result.status)) {
     try {
       await navigator.clipboard.writeText(result.prompt);
+      let detail;
+      if (result.status === "managed_source") {
+        detail = "Sequence Prompt is controlled by State Manager. The connected state_control owns the runtime text, so Prompt Writer did not overwrite the Text Box widget. Update the active State Manager prompt with the copied sequence, or disconnect state_control before applying directly.";
+      } else if (result.status === "unconnected") {
+        detail = "Connect a Text (Multiline) node to Sequence Prompt, then paste the copied sequence into it.";
+      } else {
+        detail = "Sequence Prompt is connected to a non-editable source. Connect a Text (Multiline) node and paste the copied sequence into it.";
+      }
+      if (result.settings_synced) {
+        detail = `Prompt Format, Chunks, and Chunk seconds were synchronized. ${detail}`;
+      }
       showToast(
         "Sequence copied",
-        result.status === "unconnected"
-          ? "Connect a Text (Multiline) node to Sequence Prompt, then paste the copied sequence into it."
-          : "Sequence Prompt is connected to a non-editable source. Connect a Text (Multiline) node and paste the copied sequence into it.",
+        detail,
         null,
         null,
         { dismissOnWorkspaceClick: true },
       );
     } catch (error) {
-      showToast("Continuum handoff needs a text node", "Connect a Text (Multiline) node to Sequence Prompt and copy the sequence manually.", error.message);
+      showToast("Continuum handoff needs an editable prompt source", "Copy the generated sequence manually into the runtime source connected to Sequence Prompt.", error.message);
     }
     return;
   }
