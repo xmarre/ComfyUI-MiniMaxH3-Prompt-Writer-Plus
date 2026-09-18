@@ -1455,19 +1455,30 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     }
     return Promise.resolve()
       .then(() => managedApi.setTextBox(source.manager, source.node, prompt))
-      .then((managedResult) => ({
-        status: "applied",
-        sampler,
-        source: source.node,
-        managed_source: true,
-        managed_contract_version: managedContractVersion,
-        managed_capabilities: [...STATE_MANAGER_PROMPT_CAPABILITIES],
-        managed_result: managedResult,
-        prompt,
-        settings,
-        prompt_mode: continuumSamplerSettings(sampler).prompt_mode,
-        settings_synced: settingsMutations.length > 0,
-      }))
+      .then((managedResult) => {
+        if (
+          managedResult?.persistent_verified !== true
+          || Number(managedResult?.contract_version) !== STATE_MANAGER_PROMPT_CONTRACT_VERSION
+          || String(managedResult?.write_revision || "") !== "backend-write-v1"
+        ) {
+          throw new Error(
+            "State Manager did not return the required server-confirmed managed prompt receipt (contract v4 / backend-write-v1)."
+          );
+        }
+        return {
+          status: "applied",
+          sampler,
+          source: source.node,
+          managed_source: true,
+          managed_contract_version: managedContractVersion,
+          managed_capabilities: [...STATE_MANAGER_PROMPT_CAPABILITIES],
+          managed_result: managedResult,
+          prompt,
+          settings,
+          prompt_mode: continuumSamplerSettings(sampler).prompt_mode,
+          settings_synced: settingsMutations.length > 0,
+        };
+      })
       .catch((error) => {
         const rollbackError = applyWidgetMutations(app, settingSnapshots);
         const detail = rollbackError
