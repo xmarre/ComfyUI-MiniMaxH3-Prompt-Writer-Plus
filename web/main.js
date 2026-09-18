@@ -1377,7 +1377,7 @@ async function applyCurrentSequence(syncSettings = false) {
   }
   let result;
   try {
-    result = applySequenceToContinuum(app, choice.sampler, studio.continuumSequence, {
+    result = await applySequenceToContinuum(app, choice.sampler, studio.continuumSequence, {
       syncSettings,
       mode: studio.mode,
     });
@@ -1461,23 +1461,27 @@ async function applyCurrentSequence(syncSettings = false) {
     );
     return;
   }
-  if (["unconnected", "incompatible_source", "managed_source"].includes(result.status)) {
+  if (result.status === "managed_source_unavailable") {
+    showToast(
+      "State Manager integration is missing",
+      "The Sequence Prompt is owned by State Manager, but the installed State Manager build does not expose the managed-text integration required to update its authoritative prompt. Update ComfyUI-DoRA-Dynamic-LoRA-Loader and apply again.",
+      result.message || null,
+      null,
+      { dismissOnWorkspaceClick: true },
+    );
+    return;
+  }
+  if (["unconnected", "incompatible_source"].includes(result.status)) {
     try {
       await navigator.clipboard.writeText(result.prompt);
-      let detail;
-      if (result.status === "managed_source") {
-        detail = "Sequence Prompt is controlled by State Manager. The connected state_control owns the runtime text, so Prompt Writer did not overwrite the Text Box widget. Update the active State Manager prompt with the copied sequence, or disconnect state_control before applying directly.";
-      } else if (result.status === "unconnected") {
-        detail = "Connect a Text (Multiline) node to Sequence Prompt, then paste the copied sequence into it.";
-      } else {
-        detail = "Sequence Prompt is connected to a non-editable source. Connect a Text (Multiline) node and paste the copied sequence into it.";
-      }
-      if (result.settings_synced) {
-        detail = `Prompt Format, Chunks, and Chunk seconds were synchronized. ${detail}`;
-      }
+      const detail = result.status === "unconnected"
+        ? "Connect a Text (Multiline) node to Sequence Prompt, then paste the copied sequence into it."
+        : "Sequence Prompt is connected to a non-editable source. Connect a Text (Multiline) node and paste the copied sequence into it.";
       showToast(
         "Sequence copied",
-        detail,
+        result.settings_synced
+          ? `Prompt Format, Chunks, and Chunk seconds were synchronized. ${detail}`
+          : detail,
         null,
         null,
         { dismissOnWorkspaceClick: true },
