@@ -1435,7 +1435,8 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
           : "State Manager prompt integration is unavailable. Update ComfyUI-DoRA-Dynamic-LoRA-Loader to the managed-text integration build.",
       };
     }
-    return Promise.resolve(managedApi.setTextBox(source.manager, source.node, prompt))
+    return Promise.resolve()
+      .then(() => managedApi.setTextBox(source.manager, source.node, prompt))
       .then((managedResult) => ({
         status: "applied",
         sampler,
@@ -1461,6 +1462,19 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
       });
   }
   if (source.status !== "connected") {
+    if (source.status === "managed_source_unavailable") {
+      const rollbackError = applyWidgetMutations(app, settingSnapshots);
+      return {
+        ...source,
+        sampler,
+        prompt,
+        settings,
+        settings_synced: false,
+        message: rollbackError
+          ? `The managed Sequence Prompt owner is invalid; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          : "The managed Sequence Prompt owner could not be resolved to a State Manager.",
+      };
+    }
     return {
       ...source,
       sampler,
