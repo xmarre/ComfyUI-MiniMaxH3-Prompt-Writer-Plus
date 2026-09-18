@@ -171,6 +171,62 @@ function continuumGraph({ samplerCount = 1, samplerType = "H3ContinuumSamplerV34
   return { app: { graph, canvas }, graph, samplers: nodes.filter((node) => node.type === samplerType), text, textWidget };
 }
 
+function stateManagerContinuumGraph({ managed = false, promptMode = "Timeline", chunks = 3, chunkSeconds = 5 } = {}) {
+  const result = continuumGraph({ connected: false });
+  const { graph, samplers } = result;
+  const sampler = samplers[0];
+  sampler.widgets.find((entry) => entry.name === "prompt_mode").value = promptMode;
+  sampler.widgets.find((entry) => entry.name === "chunks").value = chunks;
+  sampler.widgets.find((entry) => entry.name === "chunk_seconds").value = chunkSeconds;
+
+  const textWidget = { name: "text", value: "state-owned old prompt", callbackCalls: 0 };
+  textWidget.callback = () => { textWidget.callbackCalls += 1; };
+  const stateText = {
+    id: 1,
+    type: "State Manager Text Box",
+    inputs: [{ name: "state_control", type: "STATE_MANAGER_CONTROL", link: managed ? 12 : null }],
+    outputs: [{ name: "text", type: "STRING", links: [11] }],
+    widgets: [
+      { name: "role", value: "positive" },
+      textWidget,
+      { name: "state_slot", value: "default" },
+    ],
+    widgetChanges: [],
+    onWidgetChanged(...args) { this.widgetChanges.push(args); },
+  };
+  const processor = {
+    id: 2,
+    type: "ImpactWildcardProcessor",
+    inputs: [{ name: "text", type: "STRING", link: 11 }],
+    outputs: [{ name: "STRING", type: "STRING", links: [10] }],
+    widgets: [],
+  };
+  graph._nodes.push(stateText, processor);
+  sampler.inputs.find((input) => input.name === "sequence_prompt").link = 10;
+  graph.links[10] = { origin_id: 2, origin_slot: 0, target_id: sampler.id, target_slot: 0 };
+  graph.links[11] = { origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0 };
+
+  if (managed) {
+    const stateManager = {
+      id: 3,
+      type: "State Manager",
+      inputs: [],
+      outputs: [{ name: "state_control", type: "STATE_MANAGER_CONTROL", links: [12] }],
+      widgets: [
+        { name: "selected_character_id", value: "character-a" },
+        { name: "selected_prompt_id", value: "prompt-a" },
+      ],
+    };
+    graph._nodes.push(stateManager);
+    graph.links[12] = { origin_id: 3, origin_slot: 0, target_id: 1, target_slot: 0 };
+    stateManager.graph = graph;
+  }
+
+  stateText.graph = graph;
+  processor.graph = graph;
+  return { ...result, stateText, textWidget };
+}
+
 test("Continuum Timeline serialization is canonical for integer and fractional durations", () => {
   const prompts = ["First prompt.\nLine two.", "Second prompt.", "Third prompt."];
   const serialized = serializeContinuumPrompts(prompts, {
@@ -406,6 +462,142 @@ test("Continuum graph handoff writes Timeline and treats Prompt Format as an exp
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
 });
 
+test("Continuum handoff edits an unmanaged State Manager Text Box through a one-in/one-out STRING processor", () => {
+  const { app, graph, samplers, textWidget } = stateManagerContinuumGraph({
+    managed: false,
+    promptMode: "Fixed",
+    chunks: 3,
+    chunkSeconds: 5,
+  });
+  const state = {
+    settings: { chunks: 2, chunk_seconds: 7 },
+    preamble: "Global.",
+    prompts: ["One", "Two"],
+  };
+
+  assert.equal(connectedSequenceTextSource(graph, samplers[0]).status, "connected");
+  let result = applySequenceToContinuum(app, samplers[0], state);
+  assert.equal(result.status, "mismatch");
+  assert.deepEqual(
+    result.mismatches.map((item) => item.field),
+    ["prompt_mode", "chunks", "chunk_seconds"],
+  );
+  assert.equal(textWidget.value, "state-owned old prompt");
+
+  result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  assert.equal(result.status, "applied");
+  assert.equal(result.settings_synced, true);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 7);
+  assert.equal(textWidget.value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.equal(textWidget.callbackCalls, 1);
+});
+
+test("Continuum handoff persists a State Manager-controlled Sequence Prompt through the owner API", async () => {
+  const { app, graph, samplers, textWidget } = stateManagerContinuumGraph({
+    managed: true,
+    promptMode: "Auto",
+    chunks: 3,
+    chunkSeconds: 5,
+  });
+  const state = {
+    settings: { chunks: 2, chunk_seconds: 7 },
+    preamble: "Global.",
+    prompts: ["One", "Two"],
+  };
+
+  const source = connectedSequenceTextSource(graph, samplers[0]);
+  assert.equal(source.status, "managed_source");
+  assert.equal(source.manager?.type, "State Manager");
+
+  let result = applySequenceToContinuum(app, samplers[0], state);
+  assert.equal(result.status, "mismatch");
+  assert.deepEqual(
+    result.mismatches.map((item) => item.field),
+    ["prompt_mode", "chunks", "chunk_seconds"],
+  );
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(textWidget.value, "state-owned old prompt");
+
+  result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  assert.equal(result.status, "managed_source_unavailable");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 1,
+    capabilities: ["authoritative_persistent_text_v1"],
+    setTextBox() {
+      throw new Error("stale integration must not execute");
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+  assert.equal(result.status, "managed_source_unavailable");
+  assert.equal(result.observed_contract_version, 1);
+  assert.equal(result.required_contract_version, 2);
+  assert.equal(result.required_capability, "impact_wildcard_queue_bridge_v1");
+  assert.match(result.message, /unavailable or outdated/);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 2,
+    capabilities: ["authoritative_persistent_text_v1", "impact_wildcard_queue_bridge_v1"],
+    setTextBox() {
+      throw new Error("managed write failed");
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+  assert.equal(result.status, "apply_failed");
+  assert.match(result.message, /managed write failed/);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
+  const writes = [];
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 2,
+    capabilities: ["authoritative_persistent_text_v1", "impact_wildcard_queue_bridge_v1"],
+    async setTextBox(manager, textNode, value) {
+      writes.push({ manager, textNode, value });
+      textWidget.value = value;
+      return { status: "updated", role: "positive", slot: "default", persistent_verified: true };
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+
+  assert.equal(result.status, "applied");
+  assert.equal(result.managed_source, true);
+  assert.equal(result.managed_contract_version, 2);
+  assert.equal(result.managed_capability, "impact_wildcard_queue_bridge_v1");
+  assert.equal(result.managed_result.persistent_verified, true);
+  assert.equal(result.settings_synced, true);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 7);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].manager.type, "State Manager");
+  assert.equal(writes[0].textNode.type, "State Manager Text Box");
+  assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.equal(textWidget.value, writes[0].value);
+  assert.match(mainSource, /State Manager integration is missing or outdated/);
+});
+
 test("Continuum graph discovery compacts Reference Image gaps without counting keyframes", () => {
   const { app, samplers } = continuumGraph({
     referenceInputs: [
@@ -575,7 +767,7 @@ test("Continuum reference scope validator enforces keyframe endpoints and persis
   assert.equal(result.valid, true);
 });
 
-test("Continuum sync does not mutate sampler settings when Sequence Prompt has no editable source", () => {
+test("Continuum sync updates sampler settings before reporting an uneditable Sequence Prompt source", () => {
   const { app, samplers } = continuumGraph({ connected: false });
   const sampler = samplers[0];
   sampler.widgets.find((entry) => entry.name === "prompt_mode").value = "List";
@@ -589,9 +781,11 @@ test("Continuum sync does not mutate sampler settings when Sequence Prompt has n
   }, { syncSettings: true });
 
   assert.equal(result.status, "unconnected");
-  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "List");
-  assert.equal(sampler.widgets.find((entry) => entry.name === "chunks").value, 2);
-  assert.equal(sampler.widgets.find((entry) => entry.name === "chunk_seconds").value, 6);
+  assert.equal(result.settings_synced, true);
+  assert.equal(result.prompt, "Global.\n\n[0-5s]\nOne.\n\n[5-10s]\nTwo.\n\n[10-15s]\nThree.");
+  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(sampler.widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(sampler.widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 });
 
 test("Continuum apply rolls back sampler and text values when a widget callback throws", () => {
