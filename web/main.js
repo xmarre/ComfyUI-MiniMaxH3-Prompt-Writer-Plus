@@ -1464,7 +1464,7 @@ async function applyCurrentSequence(syncSettings = false) {
   if (result.status === "managed_source_unavailable") {
     showToast(
       "State Manager integration is missing or outdated",
-      "The Sequence Prompt is owned by State Manager, but the active frontend does not expose the queue-bridge contract required for this managed prompt path. Update the DoRA/State Manager overlay, hard-reload the ComfyUI page, and apply again.",
+      "The Sequence Prompt is owned by State Manager, but the active frontend does not expose the backend-persistent prompt contract required for this managed path. Update the DoRA/State Manager overlay, hard-reload the ComfyUI page, and apply again.",
       result.message || null,
       null,
       { dismissOnWorkspaceClick: true },
@@ -1496,7 +1496,7 @@ async function applyCurrentSequence(syncSettings = false) {
     return;
   }
   saveCurrentModeDraft();
-  showToast("Sequence applied", `${continuumSamplerLabel(choice.sampler)} now has the canonical Timeline sequence with Prompt Format = Timeline.`);
+  showToast("Sequence applied", `${continuumSamplerLabel(choice.sampler)} now has the canonical Timeline sequence. Prompt Format remains Auto or Timeline; Auto detects the Timeline at execution.`);
 }
 
 function syncWorkspace() {
