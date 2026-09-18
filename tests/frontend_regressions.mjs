@@ -695,7 +695,7 @@ test("Continuum reference scope validator enforces keyframe endpoints and persis
   assert.equal(result.valid, true);
 });
 
-test("Continuum sync does not mutate sampler settings when Sequence Prompt has no editable source", () => {
+test("Continuum sync updates sampler settings before reporting an uneditable Sequence Prompt source", () => {
   const { app, samplers } = continuumGraph({ connected: false });
   const sampler = samplers[0];
   sampler.widgets.find((entry) => entry.name === "prompt_mode").value = "List";
@@ -709,9 +709,11 @@ test("Continuum sync does not mutate sampler settings when Sequence Prompt has n
   }, { syncSettings: true });
 
   assert.equal(result.status, "unconnected");
-  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "List");
-  assert.equal(sampler.widgets.find((entry) => entry.name === "chunks").value, 2);
-  assert.equal(sampler.widgets.find((entry) => entry.name === "chunk_seconds").value, 6);
+  assert.equal(result.settings_synced, true);
+  assert.equal(result.prompt, "Global.\n\n[0-5s]\nOne.\n\n[5-10s]\nTwo.\n\n[10-15s]\nThree.");
+  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(sampler.widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(sampler.widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 });
 
 test("Continuum apply rolls back sampler and text values when a widget callback throws", () => {
