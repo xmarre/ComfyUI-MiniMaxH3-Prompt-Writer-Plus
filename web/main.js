@@ -1463,8 +1463,8 @@ async function applyCurrentSequence(syncSettings = false) {
   }
   if (result.status === "managed_source_unavailable") {
     showToast(
-      "State Manager integration is missing",
-      "The Sequence Prompt is owned by State Manager, but the installed State Manager build does not expose the managed-text integration required to update its authoritative prompt. Update ComfyUI-DoRA-Dynamic-LoRA-Loader and apply again.",
+      "State Manager integration is missing or outdated",
+      "The Sequence Prompt is owned by State Manager, but the active frontend does not expose the queue-bridge contract required for this managed prompt path. Update the DoRA/State Manager overlay, hard-reload the ComfyUI page, and apply again.",
       result.message || null,
       null,
       { dismissOnWorkspaceClick: true },
