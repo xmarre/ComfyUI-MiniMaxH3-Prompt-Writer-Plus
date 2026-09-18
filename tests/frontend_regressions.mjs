@@ -212,7 +212,10 @@ function stateManagerContinuumGraph({ managed = false, promptMode = "Timeline", 
       type: "State Manager",
       inputs: [],
       outputs: [{ name: "state_control", type: "STATE_MANAGER_CONTROL", links: [12] }],
-      widgets: [],
+      widgets: [
+        { name: "selected_character_id", value: "character-a" },
+        { name: "selected_prompt_id", value: "prompt-a" },
+      ],
     };
     graph._nodes.push(stateManager);
     graph.links[12] = { origin_id: 3, origin_slot: 0, target_id: 1, target_slot: 0 };
@@ -491,10 +494,10 @@ test("Continuum handoff edits an unmanaged State Manager Text Box through a one-
   assert.equal(textWidget.callbackCalls, 1);
 });
 
-test("Continuum handoff synchronizes sampler settings but never overwrites a State Manager-controlled runtime prompt", () => {
+test("Continuum handoff persists a State Manager-controlled Sequence Prompt through the owner API", async () => {
   const { app, graph, samplers, textWidget } = stateManagerContinuumGraph({
     managed: true,
-    promptMode: "Fixed",
+    promptMode: "Auto",
     chunks: 3,
     chunkSeconds: 5,
   });
@@ -504,26 +507,51 @@ test("Continuum handoff synchronizes sampler settings but never overwrites a Sta
     prompts: ["One", "Two"],
   };
 
-  assert.equal(connectedSequenceTextSource(graph, samplers[0]).status, "managed_source");
+  const source = connectedSequenceTextSource(graph, samplers[0]);
+  assert.equal(source.status, "managed_source");
+  assert.equal(source.manager?.type, "State Manager");
+
   let result = applySequenceToContinuum(app, samplers[0], state);
   assert.equal(result.status, "mismatch");
   assert.deepEqual(
     result.mismatches.map((item) => item.field),
     ["prompt_mode", "chunks", "chunk_seconds"],
   );
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Fixed");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(textWidget.value, "state-owned old prompt");
 
   result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
-  assert.equal(result.status, "managed_source");
+  assert.equal(result.status, "managed_source_unavailable");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
+  const writes = [];
+  globalThis.__doraStateManagerPromptApi = {
+    async setTextBox(manager, textNode, value) {
+      writes.push({ manager, textNode, value });
+      textWidget.value = value;
+      return { status: "updated", role: "positive", slot: "default" };
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+
+  assert.equal(result.status, "applied");
+  assert.equal(result.managed_source, true);
   assert.equal(result.settings_synced, true);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 7);
-  assert.equal(textWidget.value, "state-owned old prompt");
-  assert.equal(textWidget.callbackCalls, 0);
-  assert.equal(result.prompt, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
-  assert.match(mainSource, /connected state_control owns the runtime text/);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].manager.type, "State Manager");
+  assert.equal(writes[0].textNode.type, "State Manager Text Box");
+  assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.equal(textWidget.value, writes[0].value);
+  assert.match(mainSource, /State Manager integration is missing/);
 });
 
 test("Continuum graph discovery compacts Reference Image gaps without counting keyframes", () => {
