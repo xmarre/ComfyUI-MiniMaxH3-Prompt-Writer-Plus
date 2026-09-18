@@ -10,7 +10,8 @@ export const CONTINUUM_SAMPLER_NODE_IDS = new Set([
   "H3ContinuumSamplerV36",
   "H3ContinuumSamplerV37",
 ]);
-export const CONTINUUM_PROMPT_MODE = "Timeline";
+export const CONTINUUM_PROMPT_MODE = "Auto";
+const CONTINUUM_ACCEPTED_PROMPT_MODES = new Set(["Auto", "Timeline"]);
 
 const LEGACY_CHUNK_HEADER = /^\s*\[\s*Chunk\s+(\d+)\s*\]\s*$/i;
 const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\]\s*$/i;
@@ -1374,8 +1375,8 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
 
   const current = continuumSamplerSettings(sampler);
   const mismatches = [];
-  if (current.prompt_mode !== CONTINUUM_PROMPT_MODE) {
-    mismatches.push({ field: "prompt_mode", writer: CONTINUUM_PROMPT_MODE, sampler: current.prompt_mode || "(unset)" });
+  if (!CONTINUUM_ACCEPTED_PROMPT_MODES.has(current.prompt_mode)) {
+    mismatches.push({ field: "prompt_mode", writer: "Auto or Timeline", sampler: current.prompt_mode || "(unset)" });
   }
   if (current.chunks !== settings.chunks) mismatches.push({ field: "chunks", writer: settings.chunks, sampler: current.chunks });
   if (current.chunk_seconds !== settings.chunk_seconds) {
@@ -1385,7 +1386,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
 
   const settingsMutations = [];
   if (syncSettings) {
-    if (current.prompt_mode !== CONTINUUM_PROMPT_MODE) {
+    if (!CONTINUUM_ACCEPTED_PROMPT_MODES.has(current.prompt_mode)) {
       settingsMutations.push({
         node: sampler,
         target: widget(sampler, "prompt_mode"),
@@ -1464,7 +1465,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
         managed_result: managedResult,
         prompt,
         settings,
-        prompt_mode: CONTINUUM_PROMPT_MODE,
+        prompt_mode: continuumSamplerSettings(sampler).prompt_mode,
         settings_synced: settingsMutations.length > 0,
       }))
       .catch((error) => {
@@ -1524,7 +1525,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     source: source.node,
     prompt,
     settings,
-    prompt_mode: CONTINUUM_PROMPT_MODE,
+    prompt_mode: continuumSamplerSettings(sampler).prompt_mode,
     settings_synced: settingsMutations.length > 0,
   };
 }
