@@ -436,7 +436,7 @@ test("Continuum workflow discovery failures are surfaced before generate, refine
   );
 });
 
-test("Continuum graph handoff writes Timeline and treats Prompt Format as an explicit setting", () => {
+test("Continuum graph handoff writes Timeline and accepts Auto detection", () => {
   const { app, samplers, textWidget, graph } = continuumGraph();
   const choice = chooseContinuumSampler(app);
   assert.equal(choice.status, "selected");
@@ -455,11 +455,9 @@ test("Continuum graph handoff writes Timeline and treats Prompt Format as an exp
 
   samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value = "Auto";
   result = applySequenceToContinuum(app, samplers[0], state);
-  assert.equal(result.status, "mismatch");
-  assert.deepEqual(result.mismatches.map((item) => item.field), ["prompt_mode"]);
-  result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
   assert.equal(result.status, "applied");
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(result.mismatches, undefined);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
 });
 
 test("Continuum handoff edits an unmanaged State Manager Text Box through a one-in/one-out STRING processor", () => {
@@ -487,7 +485,7 @@ test("Continuum handoff edits an unmanaged State Manager Text Box through a one-
   result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
   assert.equal(result.status, "applied");
   assert.equal(result.settings_synced, true);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 7);
   assert.equal(textWidget.value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
@@ -515,7 +513,7 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   assert.equal(result.status, "mismatch");
   assert.deepEqual(
     result.mismatches.map((item) => item.field),
-    ["prompt_mode", "chunks", "chunk_seconds"],
+    ["chunks", "chunk_seconds"],
   );
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(textWidget.value, "state-owned old prompt");
@@ -626,7 +624,7 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   );
   assert.equal(result.managed_result.persistent_verified, true);
   assert.equal(result.settings_synced, true);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 7);
   assert.equal(writes.length, 1);
@@ -822,7 +820,7 @@ test("Continuum sync updates sampler settings before reporting an uneditable Seq
   assert.equal(result.status, "unconnected");
   assert.equal(result.settings_synced, true);
   assert.equal(result.prompt, "Global.\n\n[0-5s]\nOne.\n\n[5-10s]\nTwo.\n\n[10-15s]\nThree.");
-  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "Timeline");
+  assert.equal(sampler.widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(sampler.widgets.find((entry) => entry.name === "chunks").value, 3);
   assert.equal(sampler.widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 });
