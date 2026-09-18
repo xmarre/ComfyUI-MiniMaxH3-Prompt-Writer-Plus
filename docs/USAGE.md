@@ -11,7 +11,7 @@
 7. Select **Generate prompt**.
 8. Review or edit the generated prompt, then select **Copy prompt** and paste it into your H3 workflow.
 
-Prompt Writer creates text. It does not add nodes, modify the graph, or queue a video workflow.
+Ordinary prompt generation creates text only. **Apply to Continuum** may update the selected supported Continuum sampler settings and its connected editable Sequence Prompt source; it never adds or rewires nodes and never queues a video workflow.
 
 Use the fullscreen button in the Writer header when you want the workspace to fill the browser. Press Escape to leave fullscreen.
 
@@ -48,7 +48,7 @@ The header must be on its own line. Writer computes integer and fractional bound
 
 The plan keeps subject identity, wardrobe, environment, camera axis, lighting, sound, dialogue, visible text, constraints, and reference roles stable. Prompt models are probabilistic, so review the sequence; Writer validates structure and stable identifiers but cannot guarantee perfect visual continuity from the video model.
 
-Install [ComfyUI H3 Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) and use a supported **H3 Continuum Sampler V3.4–V3.7** (V3.7 is the current upstream release). Connect a **Text (Multiline)** node to the sampler's **Sequence Prompt** input. **Apply to Continuum** requires **Prompt Format = Timeline** and writes the canonical sequence into that connected text widget. If more than one compatible sampler exists, select exactly one on the canvas first. If Prompt Format, chunk count, or chunk duration differs, Writer shows every mismatch and offers an explicit **Sync settings & apply** action. That action changes only those sampler settings and the connected text value; it does not add or rewire nodes.
+Install [ComfyUI H3 Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) and use a supported **H3 Continuum Sampler V3.4–V3.7** (V3.7 is the current upstream release). Connect an editable STRING source such as **Text (Multiline)** or **State Manager Text Box** to the sampler's **Sequence Prompt** input. **Apply to Continuum** accepts **Prompt Format = Auto** or **Timeline**. Auto is left unchanged and detects Writer's canonical Timeline at execution; Fixed/List are incompatible and **Sync settings & apply** changes them to Auto. Chunk-count and chunk-duration mismatches still require explicit synchronization. For an unmanaged State Manager Text Box, Writer updates its `text` widget directly. When that box has a connected `state_control`, State Manager owns the runtime text; Writer requires the backend-persistent managed-text contract, atomically updates the selected persistent prompt/text-box entry through State Manager's server-side store, then updates the visible managed text and downstream mirrors. A failed or stale persistent write aborts the handoff and restores sampler-setting mutations instead of reporting success. Writer does not add or rewire nodes.
 
 ### Continuum references and keyframes
 

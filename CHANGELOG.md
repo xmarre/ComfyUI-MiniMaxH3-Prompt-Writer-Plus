@@ -40,7 +40,7 @@
 - Added temporal-mode validation against the selected H3 Continuum First/Last Frame wiring and blocked generation, refinement, or handoff when the selected mode does not match the active keyframe topology.
 - Added saved downstream-conditioning snapshots so later refinement and graph handoff reject observable source rewiring that would silently reuse the same public reference tags for different workflow inputs.
 - Added native Continuum chunk-body validation for repeated shared preambles, standalone H3 field/shot wrappers, nested Timeline headers, keyframe-alignment boilerplate, and undeclared subject identities.
-- Made **Sync settings & apply** transactional: Writer now resolves the editable Sequence Prompt target before mutation and restores sampler/text widget values if a graph callback fails.
+- Updated **Apply to Continuum** so canonical Timeline text can flow through Continuum **Auto** directly; Auto and explicit Timeline are compatible, while Fixed/List require explicit synchronization to Auto. Managed State Manager Text Boxes now require the v4 backend-persistent prompt contract, so the selected persistent prompt/text-box entry is server-confirmed before the handoff reports success. Missing, stale, conflicted, or failed managed writes abort the handoff and restore sampler-setting mutations instead of leaving a stale runtime prompt.
 - Fixed Continuum draft persistence after the schema-v2 contract rework: saved sequences now retain their shared preamble and downstream-conditioning snapshot, while legacy schema-v1 drafts migrate to v2 on save/load.
 - Restricted legacy `[Chunk N]` migration to genuinely legacy saved sequences so schema-v2 Timeline drafts cannot silently discard their shared preamble.
 
