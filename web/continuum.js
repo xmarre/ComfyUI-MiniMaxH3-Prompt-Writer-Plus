@@ -17,6 +17,8 @@ const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
 const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
+const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 2;
+const STATE_MANAGER_PROMPT_CAPABILITY = "impact_wildcard_queue_bridge_v1";
 const CONTINUUM_REFERENCE_INPUTS = Array.from({ length: 8 }, (_, offset) => `reference_image_${offset + 1}`);
 const CONDITIONING_ROLES = new Map([
   ["first_frame", { role: "first_frame", kind: "image" }],
@@ -1421,8 +1423,16 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
   const source = connectedSequenceTextSource(app?.graph, sampler);
   if (source.status === "managed_source") {
     const managedApi = globalThis.__doraStateManagerPromptApi;
-    if (typeof managedApi?.setTextBox !== "function") {
+    const managedCapabilities = Array.isArray(managedApi?.capabilities) ? managedApi.capabilities : [];
+    const managedContractVersion = Number(managedApi?.contract_version) || 0;
+    const managedContractReady = (
+      managedContractVersion >= STATE_MANAGER_PROMPT_CONTRACT_VERSION
+      && managedCapabilities.includes(STATE_MANAGER_PROMPT_CAPABILITY)
+      && typeof managedApi?.setTextBox === "function"
+    );
+    if (!managedContractReady) {
       const rollbackError = applyWidgetMutations(app, settingSnapshots);
+      const requirement = `State Manager prompt integration contract v${STATE_MANAGER_PROMPT_CONTRACT_VERSION} with ${STATE_MANAGER_PROMPT_CAPABILITY}`;
       return {
         status: "managed_source_unavailable",
         source,
@@ -1430,9 +1440,13 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
         prompt,
         settings,
         settings_synced: false,
+        required_contract_version: STATE_MANAGER_PROMPT_CONTRACT_VERSION,
+        observed_contract_version: managedContractVersion,
+        required_capability: STATE_MANAGER_PROMPT_CAPABILITY,
+        observed_capabilities: managedCapabilities,
         message: rollbackError
-          ? `State Manager prompt integration is unavailable; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
-          : "State Manager prompt integration is unavailable. Update ComfyUI-DoRA-Dynamic-LoRA-Loader to the managed-text integration build.",
+          ? `${requirement} is unavailable or outdated; sampler-setting rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          : `${requirement} is unavailable or outdated. Reload the ComfyUI frontend after updating ComfyUI-DoRA-Dynamic-LoRA-Loader.`,
       };
     }
     return Promise.resolve()
@@ -1442,6 +1456,8 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
         sampler,
         source: source.node,
         managed_source: true,
+        managed_contract_version: managedContractVersion,
+        managed_capability: STATE_MANAGER_PROMPT_CAPABILITY,
         managed_result: managedResult,
         prompt,
         settings,
