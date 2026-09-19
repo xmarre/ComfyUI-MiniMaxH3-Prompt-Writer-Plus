@@ -730,6 +730,20 @@ test("managed Continuum Auto writes canonical Timeline text and descriptor witho
   assert.equal(textWidget.value, writes[0].payload.text);
 });
 
+test("managed Continuum discovery requires State Manager Text Box output 0", () => {
+  const { app, samplers } = stateManagerContinuumGraph({
+    managed: true,
+    promptMode: "Auto",
+    chunks: 2,
+    chunkSeconds: 7,
+  });
+  app.graph.links[11].origin_slot = 1;
+
+  const source = connectedSequenceTextSource(app.graph, samplers[0]);
+  assert.equal(source.status, "incompatible_source");
+});
+
+
 test("managed Continuum discovery requires State Manager state_control output 7", () => {
   const { app, samplers } = stateManagerContinuumGraph({
     managed: true,
