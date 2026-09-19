@@ -18,6 +18,7 @@ const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
 const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
+const IMPACT_WILDCARD_PROCESSOR_NODE_IDS = new Set(["ImpactWildcardProcessor"]);
 const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 5;
 const STATE_MANAGER_PROMPT_CAPABILITIES = Object.freeze([
   "backend_impact_prompt_bridge_v1",
@@ -1269,10 +1270,17 @@ export function connectedSequenceTextSource(graph, sampler) {
       }
       return sourceResult;
     }
-    const stringInputs = (source.inputs || []).filter((candidate) => candidate?.type === "STRING" && candidate.link != null);
-    const stringOutputs = (source.outputs || []).filter((candidate) => candidate?.type === "STRING");
-    if (stringInputs.length !== 1 || stringOutputs.length !== 1) break;
-    link = graphLink(graph, stringInputs[0].link);
+    // Managed provenance is only defined through the audited Impact
+    // Wildcard Processor STRING output 0. Do not traverse arbitrary one-in/one-out
+    // STRING transforms: DoRA deliberately refuses to attach a verified sidecar
+    // through unknown transforms or ImpactWildcardEncode.
+    if (!IMPACT_WILDCARD_PROCESSOR_NODE_IDS.has(nodeClassId(source))) break;
+    if (Number(link.origin_slot) !== 0) break;
+    const wildcardInput = (source.inputs || []).find(
+      (candidate) => candidate?.name === "wildcard_text" && candidate.link != null,
+    );
+    if (!wildcardInput) break;
+    link = graphLink(graph, wildcardInput.link);
   }
   return { status: "incompatible_source" };
 }
