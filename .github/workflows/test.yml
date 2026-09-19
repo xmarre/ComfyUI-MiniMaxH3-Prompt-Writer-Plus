@@ -185,6 +185,42 @@ jobs:
           H3_CONTINUUM_MANAGED_SOURCE: ${{ github.workspace }}/.managed-continuum-source
         run: python -m unittest tests.test_managed_transport_cross_repo -v
 
+  effective-continuum-stack:
+    name: H3 Continuum #24 + #27 + optional #25 · effective stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Prompt Writer
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out composed Continuum validation mirror
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: xmarre/ComfyUI-H3-Continuum-Plus
+          ref: 1711df02a2ec350149fedde2c0ea4f7dae40ce3e
+          path: .effective-continuum-stack
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Continuum test dependencies
+        working-directory: .effective-continuum-stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install -r requirements.txt numpy safetensors pytest ruff packaging
+
+      - name: Validate effective Continuum overlay stack
+        working-directory: .effective-continuum-stack
+        run: |
+          python -m ruff check . --select E9,F63,F7,F82
+          python -m compileall -q .
+          python -m pytest -q -p no:cacheprovider
+
   image-conveyor-contract:
     name: Image Conveyor 1.7.2 · reviewed contract
     runs-on: ubuntu-latest
