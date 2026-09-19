@@ -1258,7 +1258,9 @@ export function connectedSequenceTextSource(graph, sampler) {
       link = graphLink(graph, source.inputs?.[inputIndex]?.link);
       continue;
     }
-    const sourceResult = editableSequenceTextSource(source);
+    const sourceResult = Number(link.origin_slot) === 0
+      ? editableSequenceTextSource(source)
+      : null;
     if (sourceResult) {
       if (sourceResult.status === "managed_source") {
         const stateLink = graphLink(graph, sourceResult.state_control_link);
