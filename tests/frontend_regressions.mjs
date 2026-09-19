@@ -199,7 +199,7 @@ function stateManagerContinuumGraph({ managed = false, promptMode = "Timeline", 
   const processor = {
     id: 2,
     type: "ImpactWildcardProcessor",
-    inputs: [{ name: "text", type: "STRING", link: 11 }],
+    inputs: [{ name: "wildcard_text", type: "STRING", link: 11 }],
     outputs: [{ name: "STRING", type: "STRING", links: [10] }],
     widgets: [],
   };
@@ -729,6 +729,36 @@ test("managed Continuum Auto writes canonical Timeline text and descriptor witho
   });
   assert.equal(textWidget.value, writes[0].payload.text);
 });
+
+test("managed Continuum discovery refuses unknown STRING transforms and ImpactWildcardEncode", () => {
+  for (const sourceType of ["UnknownStringTransform", "ImpactWildcardEncode"]) {
+    const { app, samplers, stateText } = stateManagerContinuumGraph({
+      managed: true,
+      promptMode: "Auto",
+      chunks: 2,
+      chunkSeconds: 7,
+    });
+    const graph = app.graph;
+    const transform = graph.getNodeById(2);
+    transform.type = sourceType;
+    transform.comfyClass = sourceType;
+    transform.inputs = [{ name: "wildcard_text", type: "STRING", link: 11 }];
+    transform.outputs = sourceType === "ImpactWildcardEncode"
+      ? [
+          { name: "MODEL", type: "MODEL", links: [] },
+          { name: "CLIP", type: "CLIP", links: [] },
+          { name: "CONDITIONING", type: "CONDITIONING", links: [] },
+          { name: "populated_text", type: "STRING", links: [10] },
+        ]
+      : [{ name: "STRING", type: "STRING", links: [10] }];
+    graph.links[10].origin_slot = sourceType === "ImpactWildcardEncode" ? 3 : 0;
+
+    const source = connectedSequenceTextSource(graph, samplers[0]);
+    assert.equal(source.status, "incompatible_source");
+    assert.equal(stateText.type, "State Manager Text Box");
+  }
+});
+
 
 test("managed Continuum Apply refuses consumer geometry outside the selected sampler limits without clamping", async () => {
   const { app, samplers } = stateManagerContinuumGraph({
