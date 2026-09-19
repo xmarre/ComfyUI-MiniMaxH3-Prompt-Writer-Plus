@@ -26,7 +26,9 @@ const {
   applySequenceToContinuum,
   chooseContinuumSampler,
   connectedSequenceTextSource,
+  continuumConsumerLimits,
   discoverContinuumReferenceInventory,
+  managedContinuumPromptDocument,
   normalizeContinuumSettings,
   parseContinuumTimeline,
   sequenceStateFromResult,
@@ -117,8 +119,8 @@ function continuumGraph({ samplerCount = 1, samplerType = "H3ContinuumSamplerV34
       inputs: samplerInputs,
       widgets: [
         { name: "prompt_mode", value: "Timeline" },
-        { name: "chunks", value: 3 },
-        { name: "chunk_seconds", value: 5 },
+        { name: "chunks", value: 3, options: { min: 1, max: 16 } },
+        { name: "chunk_seconds", value: 5, options: { min: 4, max: 15 } },
       ],
     };
     nodes.push(sampler);
@@ -492,7 +494,7 @@ test("Continuum handoff edits an unmanaged State Manager Text Box through a one-
   assert.equal(textWidget.callbackCalls, 1);
 });
 
-test("Continuum handoff persists a State Manager-controlled Sequence Prompt through the owner API", async () => {
+test("Continuum handoff persists a State Manager-controlled Sequence Prompt document through the owner API", async () => {
   const { app, graph, samplers, textWidget } = stateManagerContinuumGraph({
     managed: true,
     promptMode: "Auto",
@@ -504,10 +506,21 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
     preamble: "Global.",
     prompts: ["One", "Two"],
   };
+  const expectedDocument = {
+    schema_version: 1,
+    format: "timeline",
+    routing: "logical_chunks",
+    geometry: { chunks: 2, chunk_seconds: "7" },
+  };
 
   const source = connectedSequenceTextSource(graph, samplers[0]);
   assert.equal(source.status, "managed_source");
   assert.equal(source.manager?.type, "State Manager");
+  assert.deepEqual(continuumConsumerLimits(samplers[0]), {
+    chunks: { min: 1, max: 16 },
+    chunk_seconds: { min: 4, max: 15 },
+  });
+  assert.deepEqual(managedContinuumPromptDocument(state.settings), expectedDocument);
 
   let result = applySequenceToContinuum(app, samplers[0], state);
   assert.equal(result.status, "mismatch");
@@ -520,57 +533,10 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
 
   result = applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
   assert.equal(result.status, "managed_source_unavailable");
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 
-  globalThis.__doraStateManagerPromptApi = {
-    contract_version: 2,
-    capabilities: ["authoritative_persistent_text_v1", "impact_wildcard_queue_bridge_v1"],
-    setTextBox() {
-      throw new Error("stale integration must not execute");
-    },
-  };
-  try {
-    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
-  } finally {
-    delete globalThis.__doraStateManagerPromptApi;
-  }
-  assert.equal(result.status, "managed_source_unavailable");
-  assert.equal(result.observed_contract_version, 2);
-  assert.equal(result.required_contract_version, 4);
-  assert.deepEqual(
-    result.required_capabilities,
-    ["backend_impact_prompt_bridge_v1", "backend_persistent_text_write_v1"],
-  );
-  assert.match(result.message, /unavailable or outdated/);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
-
-  globalThis.__doraStateManagerPromptApi = {
-    contract_version: 3,
-    capabilities: ["authoritative_persistent_text_v1", "impact_wildcard_queue_bridge_v1", "backend_impact_prompt_bridge_v1"],
-    setTextBox() {
-      throw new Error("stale v3 integration must not execute");
-    },
-  };
-  try {
-    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
-  } finally {
-    delete globalThis.__doraStateManagerPromptApi;
-  }
-  assert.equal(result.status, "managed_source_unavailable");
-  assert.equal(result.observed_contract_version, 3);
-  assert.equal(result.required_contract_version, 4);
-  assert.deepEqual(
-    result.required_capabilities,
-    ["backend_impact_prompt_bridge_v1", "backend_persistent_text_write_v1"],
-  );
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
-
+  let legacyCalled = false;
   globalThis.__doraStateManagerPromptApi = {
     contract_version: 4,
     capabilities: [
@@ -580,7 +546,8 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
       "backend_persistent_text_write_v1",
     ],
     setTextBox() {
-      throw new Error("managed write failed");
+      legacyCalled = true;
+      throw new Error("v4 text-only API must not execute");
     },
   };
   try {
@@ -588,22 +555,30 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   } finally {
     delete globalThis.__doraStateManagerPromptApi;
   }
-  assert.equal(result.status, "apply_failed");
-  assert.match(result.message, /managed write failed/);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.equal(result.status, "managed_source_unavailable");
+  assert.equal(result.observed_contract_version, 4);
+  assert.equal(result.required_contract_version, 5);
+  assert.deepEqual(
+    result.required_capabilities,
+    [
+      "backend_impact_prompt_bridge_v1",
+      "backend_persistent_text_write_v1",
+      "prompt_document_v1",
+    ],
+  );
+  assert.equal(legacyCalled, false);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 
   globalThis.__doraStateManagerPromptApi = {
-    contract_version: 4,
+    contract_version: 5,
     capabilities: [
-      "authoritative_persistent_text_v1",
-      "impact_wildcard_queue_bridge_v1",
       "backend_impact_prompt_bridge_v1",
       "backend_persistent_text_write_v1",
+      "prompt_document_v1",
     ],
-    async setTextBox() {
-      return { status: "updated", persistent_verified: true };
+    setPromptDocument() {
+      throw new Error("managed document write failed");
     },
   };
   try {
@@ -612,24 +587,58 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
     delete globalThis.__doraStateManagerPromptApi;
   }
   assert.equal(result.status, "apply_failed");
-  assert.match(result.message, /server-confirmed managed prompt receipt/);
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
+  assert.match(result.message, /managed document write failed/);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 5,
+    capabilities: [
+      "backend_impact_prompt_bridge_v1",
+      "backend_persistent_text_write_v1",
+      "prompt_document_v1",
+    ],
+    async setPromptDocument() {
+      return {
+        status: "updated",
+        persistent_verified: true,
+        contract_version: 5,
+        write_revision: "backend-document-write-v1",
+        prompt_document: { ...expectedDocument, routing: "physical_timeline" },
+      };
+    },
+  };
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+  assert.equal(result.status, "apply_failed");
+  assert.match(result.message, /server-confirmed managed prompt-document receipt/);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 3);
   assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
 
   const writes = [];
   globalThis.__doraStateManagerPromptApi = {
-    contract_version: 4,
+    contract_version: 5,
     capabilities: [
-      "authoritative_persistent_text_v1",
-      "impact_wildcard_queue_bridge_v1",
       "backend_impact_prompt_bridge_v1",
       "backend_persistent_text_write_v1",
+      "prompt_document_v1",
     ],
-    async setTextBox(manager, textNode, value) {
-      writes.push({ manager, textNode, value });
-      textWidget.value = value;
-      return { status: "updated", role: "positive", slot: "default", persistent_verified: true, contract_version: 4, write_revision: "backend-write-v1" };
+    async setPromptDocument(manager, textNode, payload) {
+      writes.push({ manager, textNode, payload });
+      textWidget.value = payload.text;
+      return {
+        status: "updated",
+        role: "positive",
+        slot: "default",
+        persistent_verified: true,
+        library_revision: 9,
+        contract_version: 5,
+        write_revision: "backend-document-write-v1",
+        prompt_document: payload.prompt_document,
+      };
     },
   };
   try {
@@ -640,10 +649,15 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
 
   assert.equal(result.status, "applied");
   assert.equal(result.managed_source, true);
-  assert.equal(result.managed_contract_version, 4);
+  assert.equal(result.managed_contract_version, 5);
+  assert.deepEqual(result.prompt_document, expectedDocument);
   assert.deepEqual(
     result.managed_capabilities,
-    ["backend_impact_prompt_bridge_v1", "backend_persistent_text_write_v1"],
+    [
+      "backend_impact_prompt_bridge_v1",
+      "backend_persistent_text_write_v1",
+      "prompt_document_v1",
+    ],
   );
   assert.equal(result.managed_result.persistent_verified, true);
   assert.equal(result.settings_synced, true);
@@ -653,12 +667,13 @@ test("Continuum handoff persists a State Manager-controlled Sequence Prompt thro
   assert.equal(writes.length, 1);
   assert.equal(writes[0].manager.type, "State Manager");
   assert.equal(writes[0].textNode.type, "State Manager Text Box");
-  assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
-  assert.equal(textWidget.value, writes[0].value);
+  assert.equal(writes[0].payload.text, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.deepEqual(writes[0].payload.prompt_document, expectedDocument);
+  assert.equal(textWidget.value, writes[0].payload.text);
   assert.match(mainSource, /State Manager integration is missing or outdated/);
 });
 
-test("managed Continuum Auto writes the canonical Timeline without a settings-sync round trip", async () => {
+test("managed Continuum Auto writes canonical Timeline text and descriptor without a settings-sync round trip", async () => {
   const { app, samplers, textWidget } = stateManagerContinuumGraph({
     managed: true,
     promptMode: "Auto",
@@ -672,24 +687,24 @@ test("managed Continuum Auto writes the canonical Timeline without a settings-sy
   };
   const writes = [];
   globalThis.__doraStateManagerPromptApi = {
-    contract_version: 4,
+    contract_version: 5,
     capabilities: [
-      "authoritative_persistent_text_v1",
-      "impact_wildcard_queue_bridge_v1",
       "backend_impact_prompt_bridge_v1",
       "backend_persistent_text_write_v1",
+      "prompt_document_v1",
     ],
-    async setTextBox(manager, textNode, value) {
-      writes.push({ manager, textNode, value });
-      textWidget.value = value;
+    async setPromptDocument(manager, textNode, payload) {
+      writes.push({ manager, textNode, payload });
+      textWidget.value = payload.text;
       return {
         status: "updated",
         role: "positive",
         slot: "default",
         persistent_verified: true,
         library_revision: 9,
-        contract_version: 4,
-        write_revision: "backend-write-v1",
+        contract_version: 5,
+        write_revision: "backend-document-write-v1",
+        prompt_document: payload.prompt_document,
       };
     },
   };
@@ -704,10 +719,60 @@ test("managed Continuum Auto writes the canonical Timeline without a settings-sy
   assert.equal(result.status, "applied");
   assert.equal(result.settings_synced, false);
   assert.equal(result.prompt_mode, "Auto");
-  assert.equal(samplers[0].widgets.find((entry) => entry.name === "prompt_mode").value, "Auto");
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].value, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
-  assert.equal(textWidget.value, writes[0].value);
+  assert.equal(writes[0].payload.text, "Global.\n\n[0-7s]\nOne\n\n[7-14s]\nTwo");
+  assert.deepEqual(writes[0].payload.prompt_document, {
+    schema_version: 1,
+    format: "timeline",
+    routing: "logical_chunks",
+    geometry: { chunks: 2, chunk_seconds: "7" },
+  });
+  assert.equal(textWidget.value, writes[0].payload.text);
+});
+
+test("managed Continuum Apply refuses consumer geometry outside the selected sampler limits without clamping", async () => {
+  const { app, samplers } = stateManagerContinuumGraph({
+    managed: true,
+    promptMode: "Auto",
+    chunks: 2,
+    chunkSeconds: 5,
+  });
+  const state = {
+    settings: { chunks: 2, chunk_seconds: 20 },
+    preamble: "Global.",
+    prompts: ["One", "Two"],
+  };
+  let writes = 0;
+  globalThis.__doraStateManagerPromptApi = {
+    contract_version: 5,
+    capabilities: [
+      "backend_impact_prompt_bridge_v1",
+      "backend_persistent_text_write_v1",
+      "prompt_document_v1",
+    ],
+    async setPromptDocument() {
+      writes += 1;
+      throw new Error("unsupported geometry must not be written");
+    },
+  };
+
+  let result;
+  try {
+    result = await applySequenceToContinuum(app, samplers[0], state, { syncSettings: true });
+  } finally {
+    delete globalThis.__doraStateManagerPromptApi;
+  }
+
+  assert.equal(result.status, "consumer_geometry_unsupported");
+  assert.deepEqual(result.consumer_limits, {
+    chunks: { min: 1, max: 16 },
+    chunk_seconds: { min: 4, max: 15 },
+  });
+  assert.deepEqual(result.violations.map((item) => item.field), ["chunk_seconds"]);
+  assert.equal(writes, 0);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunks").value, 2);
+  assert.equal(samplers[0].widgets.find((entry) => entry.name === "chunk_seconds").value, 5);
+  assert.equal(normalizeContinuumSettings({ chunks: 2, chunk_seconds: 20 }).chunk_seconds, 20);
 });
 
 
