@@ -1263,7 +1263,11 @@ export function connectedSequenceTextSource(graph, sampler) {
       if (sourceResult.status === "managed_source") {
         const stateLink = graphLink(graph, sourceResult.state_control_link);
         const manager = stateLink ? graphNode(graph, stateLink.origin_id) : null;
-        if (!manager || !STATE_MANAGER_NODE_IDS.has(nodeClassId(manager))) {
+        if (
+          !manager
+          || !STATE_MANAGER_NODE_IDS.has(nodeClassId(manager))
+          || Number(stateLink.origin_slot) !== 7
+        ) {
           return { status: "managed_source_unavailable", node: source, reason: "invalid_state_manager_owner" };
         }
         return { ...sourceResult, manager };
