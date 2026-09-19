@@ -18,10 +18,12 @@ const TIMELINE_HEADER = /^\s*\[\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s?\s*\
 const EDITABLE_MULTILINE_NODE_IDS = new Set(["PrimitiveStringMultiline"]);
 const STATE_MANAGER_TEXT_BOX_NODE_IDS = new Set(["State Manager Text Box", "StateManagerTextBox"]);
 const STATE_MANAGER_NODE_IDS = new Set(["State Manager", "DoRA State Manager", "StateManager"]);
-const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 4;
+const IMPACT_WILDCARD_PROCESSOR_NODE_IDS = new Set(["ImpactWildcardProcessor"]);
+const STATE_MANAGER_PROMPT_CONTRACT_VERSION = 5;
 const STATE_MANAGER_PROMPT_CAPABILITIES = Object.freeze([
   "backend_impact_prompt_bridge_v1",
   "backend_persistent_text_write_v1",
+  "prompt_document_v1",
 ]);
 const CONTINUUM_REFERENCE_INPUTS = Array.from({ length: 8 }, (_, offset) => `reference_image_${offset + 1}`);
 const CONDITIONING_ROLES = new Map([
@@ -1256,22 +1258,35 @@ export function connectedSequenceTextSource(graph, sampler) {
       link = graphLink(graph, source.inputs?.[inputIndex]?.link);
       continue;
     }
-    const sourceResult = editableSequenceTextSource(source);
+    const sourceResult = Number(link.origin_slot) === 0
+      ? editableSequenceTextSource(source)
+      : null;
     if (sourceResult) {
       if (sourceResult.status === "managed_source") {
         const stateLink = graphLink(graph, sourceResult.state_control_link);
         const manager = stateLink ? graphNode(graph, stateLink.origin_id) : null;
-        if (!manager || !STATE_MANAGER_NODE_IDS.has(nodeClassId(manager))) {
+        if (
+          !manager
+          || !STATE_MANAGER_NODE_IDS.has(nodeClassId(manager))
+          || Number(stateLink.origin_slot) !== 7
+        ) {
           return { status: "managed_source_unavailable", node: source, reason: "invalid_state_manager_owner" };
         }
         return { ...sourceResult, manager };
       }
       return sourceResult;
     }
-    const stringInputs = (source.inputs || []).filter((candidate) => candidate?.type === "STRING" && candidate.link != null);
-    const stringOutputs = (source.outputs || []).filter((candidate) => candidate?.type === "STRING");
-    if (stringInputs.length !== 1 || stringOutputs.length !== 1) break;
-    link = graphLink(graph, stringInputs[0].link);
+    // Managed provenance is only defined through the audited Impact
+    // Wildcard Processor STRING output 0. Do not traverse arbitrary one-in/one-out
+    // STRING transforms: DoRA deliberately refuses to attach a verified sidecar
+    // through unknown transforms or ImpactWildcardEncode.
+    if (!IMPACT_WILDCARD_PROCESSOR_NODE_IDS.has(nodeClassId(source))) break;
+    if (Number(link.origin_slot) !== 0) break;
+    const wildcardInput = (source.inputs || []).find(
+      (candidate) => candidate?.name === "wildcard_text" && candidate.link != null,
+    );
+    if (!wildcardInput) break;
+    link = graphLink(graph, wildcardInput.link);
   }
   return { status: "incompatible_source" };
 }
@@ -1315,6 +1330,81 @@ export function continuumSamplerSettings(sampler) {
     chunks: Number(widget(sampler, "chunks")?.value),
     chunk_seconds: Number(widget(sampler, "chunk_seconds")?.value),
   };
+}
+
+function widgetBound(target, name, fallback) {
+  const value = Number(target?.options?.[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+export function continuumConsumerLimits(sampler) {
+  const chunksWidget = widget(sampler, "chunks");
+  const secondsWidget = widget(sampler, "chunk_seconds");
+  return {
+    chunks: {
+      min: Math.max(CONTINUUM_MIN_CHUNKS, widgetBound(chunksWidget, "min", CONTINUUM_MIN_CHUNKS)),
+      max: Math.min(CONTINUUM_MAX_CHUNKS, widgetBound(chunksWidget, "max", CONTINUUM_MAX_CHUNKS)),
+    },
+    chunk_seconds: {
+      min: Math.max(CONTINUUM_MIN_SECONDS, widgetBound(secondsWidget, "min", CONTINUUM_MIN_SECONDS)),
+      max: Math.min(CONTINUUM_MAX_SECONDS, widgetBound(secondsWidget, "max", CONTINUUM_MAX_SECONDS)),
+    },
+  };
+}
+
+export function managedContinuumPromptDocument(settings) {
+  const normalized = normalizeContinuumSettings(settings);
+  return {
+    schema_version: 1,
+    format: "timeline",
+    routing: "logical_chunks",
+    geometry: {
+      chunks: normalized.chunks,
+      chunk_seconds: timelineBoundary(normalized.chunk_seconds, 1),
+    },
+  };
+}
+
+function sameManagedPromptDocument(actual, expected) {
+  return (
+    actual
+    && typeof actual === "object"
+    && !Array.isArray(actual)
+    && Number(actual.schema_version) === expected.schema_version
+    && String(actual.format || "") === expected.format
+    && String(actual.routing || "") === expected.routing
+    && Number(actual.geometry?.chunks) === expected.geometry.chunks
+    && String(actual.geometry?.chunk_seconds || "") === expected.geometry.chunk_seconds
+  );
+}
+
+function managedGeometryViolation(settings, limits) {
+  const violations = [];
+  if (
+    limits.chunks.min > limits.chunks.max
+    || settings.chunks < limits.chunks.min
+    || settings.chunks > limits.chunks.max
+  ) {
+    violations.push({
+      field: "chunks",
+      writer: settings.chunks,
+      min: limits.chunks.min,
+      max: limits.chunks.max,
+    });
+  }
+  if (
+    limits.chunk_seconds.min > limits.chunk_seconds.max
+    || settings.chunk_seconds < limits.chunk_seconds.min
+    || settings.chunk_seconds > limits.chunk_seconds.max
+  ) {
+    violations.push({
+      field: "chunk_seconds",
+      writer: settings.chunk_seconds,
+      min: limits.chunk_seconds.min,
+      max: limits.chunk_seconds.max,
+    });
+  }
+  return violations;
 }
 
 export function applySequenceToContinuum(app, sampler, sequenceState, { syncSettings = false, mode = null } = {}) {
@@ -1373,6 +1463,24 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     };
   }
 
+  const source = connectedSequenceTextSource(app?.graph, sampler);
+  if (source.status === "managed_source") {
+    const consumer_limits = continuumConsumerLimits(sampler);
+    const consumer_violations = managedGeometryViolation(settings, consumer_limits);
+    if (consumer_violations.length) {
+      return {
+        status: "consumer_geometry_unsupported",
+        source,
+        sampler,
+        prompt,
+        settings,
+        consumer_limits,
+        violations: consumer_violations,
+        settings_synced: false,
+      };
+    }
+  }
+
   const current = continuumSamplerSettings(sampler);
   const mismatches = [];
   if (!CONTINUUM_ACCEPTED_PROMPT_MODES.has(current.prompt_mode)) {
@@ -1424,7 +1532,6 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     };
   }
 
-  const source = connectedSequenceTextSource(app?.graph, sampler);
   if (source.status === "managed_source") {
     const managedApi = globalThis.__doraStateManagerPromptApi;
     const managedCapabilities = Array.isArray(managedApi?.capabilities) ? managedApi.capabilities : [];
@@ -1432,7 +1539,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
     const managedContractReady = (
       managedContractVersion >= STATE_MANAGER_PROMPT_CONTRACT_VERSION
       && STATE_MANAGER_PROMPT_CAPABILITIES.every((capability) => managedCapabilities.includes(capability))
-      && typeof managedApi?.setTextBox === "function"
+      && typeof managedApi?.setPromptDocument === "function"
     );
     if (!managedContractReady) {
       const rollbackError = applyWidgetMutations(app, settingSnapshots);
@@ -1453,16 +1560,21 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
           : `${requirement} is unavailable or outdated. Reload the ComfyUI frontend after updating ComfyUI-DoRA-Dynamic-LoRA-Loader.`,
       };
     }
+    const prompt_document = managedContinuumPromptDocument(settings);
     return Promise.resolve()
-      .then(() => managedApi.setTextBox(source.manager, source.node, prompt))
+      .then(() => managedApi.setPromptDocument(source.manager, source.node, {
+        text: prompt,
+        prompt_document,
+      }))
       .then((managedResult) => {
         if (
           managedResult?.persistent_verified !== true
           || Number(managedResult?.contract_version) !== STATE_MANAGER_PROMPT_CONTRACT_VERSION
-          || String(managedResult?.write_revision || "") !== "backend-write-v1"
+          || String(managedResult?.write_revision || "") !== "backend-document-write-v1"
+          || !sameManagedPromptDocument(managedResult?.prompt_document, prompt_document)
         ) {
           throw new Error(
-            "State Manager did not return the required server-confirmed managed prompt receipt (contract v4 / backend-write-v1)."
+            "State Manager did not return the required server-confirmed managed prompt-document receipt (contract v5 / backend-document-write-v1)."
           );
         }
         return {
@@ -1473,6 +1585,7 @@ export function applySequenceToContinuum(app, sampler, sequenceState, { syncSett
           managed_contract_version: managedContractVersion,
           managed_capabilities: [...STATE_MANAGER_PROMPT_CAPABILITIES],
           managed_result: managedResult,
+          prompt_document,
           prompt,
           settings,
           prompt_mode: continuumSamplerSettings(sampler).prompt_mode,

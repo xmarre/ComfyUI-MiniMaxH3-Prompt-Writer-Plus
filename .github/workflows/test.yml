@@ -152,6 +152,75 @@ jobs:
           H3_CONTINUUM_SOURCE: ${{ github.workspace }}/.continuum-source
         run: python -m unittest discover -s tests -p "test_continuum*.py"
 
+  managed-continuum-contract:
+    name: H3 Continuum managed transport · reviewed contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Prompt Writer
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out reviewed managed H3 Continuum source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: xmarre/ComfyUI-H3-Continuum-Plus
+          ref: 620a86caf484139a84077d5a9be8dedf4d9b645d
+          path: .managed-continuum-source
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install contract-test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install aiohttp "av>=17.0.0" pillow
+
+      - name: Run managed transport cross-repository contract
+        env:
+          PYTHONPATH: tests/ci_stubs
+          H3_CONTINUUM_MANAGED_SOURCE: ${{ github.workspace }}/.managed-continuum-source
+        run: python -m unittest tests.test_managed_transport_cross_repo -v
+
+  effective-continuum-stack:
+    name: H3 Continuum #24 + #27 + optional #25 · effective stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Prompt Writer
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out composed Continuum validation mirror
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: xmarre/ComfyUI-H3-Continuum-Plus
+          ref: 01d637c71d184b3fa78ffeaef4a2047a8cc8f42b
+          path: .effective-continuum-stack
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Continuum test dependencies
+        working-directory: .effective-continuum-stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install -r requirements.txt numpy safetensors pytest ruff packaging
+
+      - name: Validate effective Continuum overlay stack
+        working-directory: .effective-continuum-stack
+        run: |
+          python -m ruff check . --select E9,F63,F7,F82
+          python -m compileall -q .
+          python -m pytest -q -p no:cacheprovider
+
   image-conveyor-contract:
     name: Image Conveyor 1.7.2 · reviewed contract
     runs-on: ubuntu-latest
