@@ -220,7 +220,7 @@ function stateManagerContinuumGraph({ managed = false, promptMode = "Timeline", 
       ],
     };
     graph._nodes.push(stateManager);
-    graph.links[12] = { origin_id: 3, origin_slot: 0, target_id: 1, target_slot: 0 };
+    graph.links[12] = { origin_id: 3, origin_slot: 7, target_id: 1, target_slot: 0 };
     stateManager.graph = graph;
   }
 
@@ -729,6 +729,21 @@ test("managed Continuum Auto writes canonical Timeline text and descriptor witho
   });
   assert.equal(textWidget.value, writes[0].payload.text);
 });
+
+test("managed Continuum discovery requires State Manager state_control output 7", () => {
+  const { app, samplers } = stateManagerContinuumGraph({
+    managed: true,
+    promptMode: "Auto",
+    chunks: 2,
+    chunkSeconds: 7,
+  });
+  app.graph.links[12].origin_slot = 6;
+
+  const source = connectedSequenceTextSource(app.graph, samplers[0]);
+  assert.equal(source.status, "managed_source_unavailable");
+  assert.equal(source.reason, "invalid_state_manager_owner");
+});
+
 
 test("managed Continuum discovery refuses unknown STRING transforms and ImpactWildcardEncode", () => {
   for (const sourceType of ["UnknownStringTransform", "ImpactWildcardEncode"]) {
