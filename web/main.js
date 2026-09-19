@@ -1461,6 +1461,20 @@ async function applyCurrentSequence(syncSettings = false) {
     );
     return;
   }
+  if (result.status === "consumer_geometry_unsupported") {
+    const detail = (result.violations || []).map((item) => {
+      const label = item.field === "chunks" ? "Chunks" : "Chunk seconds";
+      return `${label}: Writer ${item.writer}, consumer ${item.min}–${item.max}`;
+    }).join(" · ");
+    showToast(
+      "Continuum consumer geometry is unsupported",
+      `${detail}. Writer authoring is unchanged; select supported sequence geometry for this sampler. Values are not clamped.`,
+      null,
+      null,
+      { dismissOnWorkspaceClick: true },
+    );
+    return;
+  }
   if (result.status === "managed_source_unavailable") {
     showToast(
       "State Manager integration is missing or outdated",
@@ -1496,7 +1510,10 @@ async function applyCurrentSequence(syncSettings = false) {
     return;
   }
   saveCurrentModeDraft();
-  showToast("Sequence applied", `${continuumSamplerLabel(choice.sampler)} now has the canonical Timeline sequence. Prompt Format remains Auto or Timeline; Auto detects the Timeline at execution.`);
+  const appliedDetail = result.managed_source
+    ? `${continuumSamplerLabel(choice.sampler)} now has the canonical Timeline sequence, and State Manager saved its logical Timeline interpretation. This confirms persistence; Impact expansion and Continuum structural/physical compilation are verified when the workflow is queued and executed.`
+    : `${continuumSamplerLabel(choice.sampler)} now has the canonical Timeline sequence. Prompt Format remains Auto or Timeline; Auto detects the Timeline at execution.`;
+  showToast("Sequence applied", appliedDetail);
 }
 
 function syncWorkspace() {
