@@ -1044,5 +1044,64 @@ class RouteStabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(text_key, routes.GENERATION_CACHE)
 
 
+class SceneRouteTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        routes.STATE.update(active_request_id=None,media_mutation_active=False,cancel_requested=False)
+        routes.STATE.pop("scene_request_token",None)
+        routes.SCENE_CANCEL_TOKENS.clear()
+        self.idle={"available":True,"queue_running":0,"queue_pending":0,"loaded_models":0}
+        self.model={"id":"api::connection::vision","family":"api"}
+
+    async def test_idle_required_and_writer_lease_shared(self):
+        with patch.object(routes,"comfyui_runtime_snapshot",return_value={**self.idle,"queue_running":1}):
+            response=await routes.analyze_scene(_Request(body={"request_token":"scene","api_provider":{}}))
+        self.assertEqual(response.status,409)
+        self.assertIsNone(routes.STATE["active_request_id"])
+        routes.STATE["active_request_id"]="ordinary-writer"
+        with patch.object(routes,"comfyui_runtime_snapshot",return_value=self.idle):
+            response=await routes.analyze_scene(_Request(body={"request_token":"scene","api_provider":{}}))
+        self.assertEqual(response.status,409)
+        self.assertEqual(routes.STATE["active_request_id"],"ordinary-writer")
+        routes.STATE["active_request_id"]=None
+
+    async def test_cancellation_before_claim_is_not_lost(self):
+        await routes.cancel_scene_analysis(_Request(body={"request_token":"early"}))
+        with patch.object(routes,"comfyui_runtime_snapshot",return_value=self.idle),patch.object(routes.API_PROVIDER_BACKEND,"resolve_model",return_value=self.model),patch.object(routes.API_PROVIDER_BACKEND,"analyze_scene") as analyze:
+            response=await routes.analyze_scene(_Request(body={"request_token":"early","api_provider":{}}))
+        self.assertEqual(response.status,499);analyze.assert_not_called()
+        self.assertIsNone(routes.STATE["active_request_id"])
+        self.assertNotIn("scene_request_token",routes.STATE)
+
+    async def test_scoped_cancel_never_cancels_another_request(self):
+        routes.STATE.update(active_request_id="other",scene_request_token="other-token")
+        with patch.object(routes.API_PROVIDER_BACKEND,"cancel") as cancel:
+            response=await routes.cancel_scene_analysis(_Request(body={"request_token":"mine"}))
+        cancel.assert_not_called();self.assertFalse(json.loads(response.text)["cancelled"])
+        routes.STATE.update(active_request_id=None);routes.STATE.pop("scene_request_token",None)
+
+    async def test_worker_failure_releases_ownership(self):
+        request=_Request(body={"request_token":"bad","api_provider":{}})
+        request.transport=types.SimpleNamespace(is_closing=lambda:False)
+        with patch.object(routes,"comfyui_runtime_snapshot",return_value=self.idle),patch.object(routes.API_PROVIDER_BACKEND,"resolve_model",return_value=self.model),patch.object(routes.API_PROVIDER_BACKEND,"analyze_scene",side_effect=routes.ModelError("SCENE_RESPONSE_INVALID","Invalid JSON")):
+            response=await routes.analyze_scene(request)
+        self.assertGreaterEqual(response.status,400)
+        self.assertIsNone(routes.STATE["active_request_id"])
+
+    async def test_cancel_owns_worker_until_it_stops(self):
+        started=threading.Event();release=threading.Event()
+        def worker(*_):
+            started.set();release.wait(2)
+            raise routes.ModelError("GENERATION_CANCELLED","Stopped")
+        request=_Request(body={"request_token":"active","api_provider":{}})
+        request.transport=types.SimpleNamespace(is_closing=lambda:False)
+        with patch.object(routes,"comfyui_runtime_snapshot",return_value=self.idle),patch.object(routes.API_PROVIDER_BACKEND,"resolve_model",return_value=self.model),patch.object(routes.API_PROVIDER_BACKEND,"analyze_scene",side_effect=worker),patch.object(routes.API_PROVIDER_BACKEND,"cancel",side_effect=release.set):
+            task=asyncio.create_task(routes.analyze_scene(request))
+            await asyncio.to_thread(started.wait,1)
+            self.assertIsNotNone(routes.STATE["active_request_id"])
+            await routes.cancel_scene_analysis(_Request(body={"request_token":"active"}))
+            response=await task
+        self.assertEqual(response.status,499);self.assertIsNone(routes.STATE["active_request_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
