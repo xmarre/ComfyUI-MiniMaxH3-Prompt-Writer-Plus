@@ -76,3 +76,39 @@ API providers show **Cancel** for the current Writer request. Writer cannot unlo
 Authentication, billing, rate-limit, safety, and quota errors are returned by the provider. A response that reaches its length limit is rejected rather than displayed as a successful but truncated H3 prompt.
 
 Comfy Cloud has not been validated for v0.3. The existence of an API provider does not establish that the extension, outbound networking, or session-key handling works there.
+
+## Versioned scene observations
+
+Timeline Studio integration can negotiate `visual_observations_v1` using
+`GET /h3studio/scene-analysis/capabilities`. It reuses connected API vision models
+and their existing transport. `POST /h3studio/scene-analysis` accepts version 1,
+`api_provider` connection/model IDs, a `request_token`, `context_budget` (2048–49152),
+and one to four inline PNG/JPEG evidence objects (`id`, `pts`, `data_url`). No
+arbitrary filesystem or remote image URL is read. Images are limited to 4 MP and
+4 MiB each, and conservatively estimated visual tokens must fit the selected model's context. Qwen3-VL uses approximately 32×32 pixels per compressed visual token; the 28-pixel budget is deliberately conservative rather than a model-exact estimator.
+
+For local LM Studio connections detected through the Custom provider, this route requests strict `response_format: json_schema` output. The LM Studio-specific grammar uses **string-only** observation fields (empty string when unsupported), because some LM Studio/Outlines versions reject nullable `type` arrays or collapse unions. Empty fields are converted back to JSON null before the unchanged strict evidence/markup validation and persistence; external provider records retain their nullable schema. LM Studio compatibility is model/runtime dependent and has not been proven against a live instance. Some local models cannot honor constrained generation; unsupported structured-output errors must be handled by selecting a compatible model, rather than presenting unvalidated text as a successful observation. A single complete ```json fence and a complete leading `<think>...</think>` reasoning wrapper are tolerated; neither contributes to observations, and the remaining JSON must still pass strict schema and evidence validation. Unfinished reasoning wrappers are rejected.
+
+The capabilities response marks each vision model as `remote` or local using the connected endpoint address. Timeline Studio confirms before sending extracted images to remote endpoints, including hosted Custom servers. The corresponding provider's privacy and retention terms apply. No full original video file is transmitted.
+
+The response is a validated observation object, not an H3 prompt. It contains
+version/evidence IDs, anonymous subjects, confidence, and nullable visual fields:
+environment, shot type, framing, posture, gaze, gestures, expression, lighting,
+props, continuity, acting and camera movement. Single-still motion, unexpected
+fields, dialogue/reference markup, unbound evidence, malformed JSON and truncated
+or unfinished streams are rejected. Pixel-grounding is not proved by schema
+validation; the receiving editor must present observations for human review.
+
+`POST /h3studio/scene-analysis/cancel` cancels the matching `request_token`,
+including cancellation that arrives before request ownership is established.
+This path shares Writer's active-request lease and media-mutation exclusions;
+ordinary prompt generation/refinement is unchanged. ComfyUI must be idle before
+interpretation; a queue/disconnect watcher cancels ongoing requests. Timeline's
+normal queue handoff waits for cancellation completion. Other clients can race
+the queue watcher. LM Studio remains provider-managed and is not unloaded by
+ComfyUI or by cancelling an API request. Secrets remain in the existing in-memory
+connection store and are not included in capability responses or project data.
+
+The companion Continuum Plus scene workspace is PR #83. This API layer is
+independent of the State Manager contribution stack; keep that stack's existing
+order and apply this layer afterward when using both integrations.
