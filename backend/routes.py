@@ -50,6 +50,7 @@ BACKENDS = {
     "ollama": OLLAMA_BACKEND,
     "api": API_PROVIDER_BACKEND,
 }
+SCENE_CANCEL_TOKENS: dict[str, float] = {}
 GENERATION_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 GENERATION_CACHE_ACCESS: dict[tuple[str, str], float] = {}
 SESSION_TTL_SECONDS = 24 * 60 * 60
@@ -643,6 +644,82 @@ async def assemble(request: web.Request) -> web.Response:
         code = error.code if isinstance(error, MediaError) else "GUIDE_LOAD_FAILED"
         return _error(code, str(error), status=500)
     return web.json_response({"request": assembled})
+
+
+@routes.get(f"{ROUTE_PREFIX}/scene-analysis/capabilities")
+async def scene_analysis_capabilities(_request: web.Request) -> web.Response:
+    return web.json_response({"version": 1, "schema": "visual_observations_v1",
+        "max_images": 4, "models": API_PROVIDER_BACKEND.scene_models(),
+        "lifecycle": "provider-managed", "cancel": "request-token"})
+
+
+@routes.post(f"{ROUTE_PREFIX}/scene-analysis/cancel")
+async def cancel_scene_analysis(request: web.Request) -> web.Response:
+    body = await _json_body(request) or {}
+    token = body.get("request_token")
+    if not isinstance(token, str) or not 1 <= len(token) <= 80:
+        return _error("INVALID_REQUEST", "A scene request token is required.", status=400)
+    with STATE_LOCK:
+        SCENE_CANCEL_TOKENS[token] = time.monotonic()
+        for key in list(SCENE_CANCEL_TOKENS):
+            if time.monotonic()-SCENE_CANCEL_TOKENS[key] > 600 or len(SCENE_CANCEL_TOKENS) > 512:
+                SCENE_CANCEL_TOKENS.pop(key, None)
+        if STATE.get("scene_request_token") != token:
+            return web.json_response({"cancelled": False})
+        STATE["cancel_requested"] = True
+        API_PROVIDER_BACKEND.cancel()
+    return web.json_response({"cancelled": True})
+
+
+@routes.post(f"{ROUTE_PREFIX}/scene-analysis")
+async def analyze_scene(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    if not body or not isinstance(body.get("request_token"), str) or not 1 <= len(body["request_token"]) <= 80:
+        return _error("INVALID_REQUEST", "A scene request token is required.", status=400)
+    snapshot = comfyui_runtime_snapshot(getattr(PromptServer.instance, "prompt_queue", None))
+    if not snapshot["available"] or snapshot["queue_running"] or snapshot["queue_pending"]:
+        return _error("COMFYUI_BUSY", "Wait for ComfyUI sampling to finish before VLM scene interpretation.", status=409)
+    request_id = _claim_generation_request()
+    if request_id is None:
+        return _error("GENERATION_BUSY", "Prompt Writer is busy.", status=409)
+    watcher = None
+    try:
+        if not isinstance(body.get("api_provider"), dict):
+            raise ModelError("SCENE_PROVIDER_INVALID", "Select a connected vision API provider.")
+        model = API_PROVIDER_BACKEND.resolve_model(body["api_provider"])
+        with STATE_LOCK:
+            STATE["scene_request_token"] = body["request_token"]
+            if body["request_token"] in SCENE_CANCEL_TOKENS:
+                STATE["cancel_requested"] = True
+        _set_active_model(request_id, model)
+        API_PROVIDER_BACKEND.prepare_request()
+        if _request_cancelled(request_id):
+            raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
+
+        async def watch_queue():
+            while True:
+                await asyncio.sleep(.2)
+                state = comfyui_runtime_snapshot(getattr(PromptServer.instance, "prompt_queue", None))
+                transport = request.transport
+                if (transport is None or transport.is_closing() or not state["available"]
+                        or state["queue_running"] or state["queue_pending"]):
+                    API_PROVIDER_BACKEND.cancel()
+                    return
+        watcher = asyncio.create_task(watch_queue())
+        result, cancellation = await _run_thread_worker(API_PROVIDER_BACKEND.analyze_scene,
+            model, body, on_cancel=API_PROVIDER_BACKEND.cancel)
+        _propagate_worker_cancellation(cancellation)
+        return web.json_response(result)
+    except ModelError as error:
+        return _error(error.code, error.message, status=499 if error.code == "GENERATION_CANCELLED" else _model_error_status(error))
+    finally:
+        if watcher:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+        with STATE_LOCK:
+            STATE.pop("scene_request_token", None)
+            SCENE_CANCEL_TOKENS.pop(body["request_token"], None)
+        _release_generation_request(request_id)
 
 
 @routes.post(f"{ROUTE_PREFIX}/generate")
