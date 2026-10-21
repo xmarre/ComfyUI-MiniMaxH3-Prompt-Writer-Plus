@@ -85,7 +85,11 @@ and their existing transport. `POST /h3studio/scene-analysis` accepts version 1,
 `api_provider` connection/model IDs, a `request_token`, `context_budget` (2048–49152),
 and one to four inline PNG/JPEG evidence objects (`id`, `pts`, `data_url`). No
 arbitrary filesystem or remote image URL is read. Images are limited to 4 MP and
-4 MiB each, and estimated visual tokens must fit the selected model's context.
+4 MiB each, and conservatively estimated visual tokens must fit the selected model's context. Qwen3-VL uses approximately 32×32 pixels per compressed visual token; the 28-pixel budget is deliberately conservative rather than a model-exact estimator.
+
+For local LM Studio connections detected through the Custom provider, this route requests strict `response_format: json_schema` output. Some local models cannot honor constrained generation; unsupported structured-output errors must be handled by selecting a compatible model, rather than presenting unvalidated text as a successful observation. A single complete ```json fence is tolerated; all fields still undergo the same schema and evidence validation.
+
+The capabilities response marks each vision model as `remote` or local using the connected endpoint address. Timeline Studio confirms before sending extracted images to remote endpoints, including hosted Custom servers. The corresponding provider's privacy and retention terms apply. No full original video file is transmitted.
 
 The response is a validated observation object, not an H3 prompt. It contains
 version/evidence IDs, anonymous subjects, confidence, and nullable visual fields:
