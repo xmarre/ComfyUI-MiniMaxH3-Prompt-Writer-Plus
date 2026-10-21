@@ -174,6 +174,7 @@ class _ApiChatHandler:
         max_tokens: int,
         seed: int | None,
         thinking: bool,
+        response_format: dict[str, Any] | None = None,
         **_unused: Any,
     ) -> dict[str, Any]:
         del top_k, seed
@@ -183,6 +184,8 @@ class _ApiChatHandler:
             "stream": True,
         }
         preset = self.connection.preset
+        if response_format is not None and preset == "custom" and self.connection.compatibility_profile == "lm_studio":
+            payload["response_format"] = response_format
         if preset in {"openai", "gemini", "openrouter"}:
             payload["stream_options"] = {"include_usage": True}
         if preset == "openai":
@@ -840,11 +843,12 @@ class ApiProviderBackend:
     def scene_models(self) -> list[dict[str, Any]]:
         """Public, secret-free snapshot of connected vision model choices."""
         with self._connections_lock:
-            return [dict(model) for connection in self._connections.values()
+            return [{**model, "remote": not _is_loopback(urlsplit(connection.base_url).hostname or "")}
+                    for connection in self._connections.values()
                     for model in connection.models if model.get("capabilities", {}).get("images")]
 
     def analyze_scene(self, model_info: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
-        from ..scene_analysis import prepare_evidence, observation_messages, parse_observation
+        from ..scene_analysis import prepare_evidence, observation_messages, parse_observation, observation_response_format
         from ..context import estimate_text_tokens, CONTEXT_SAFETY_TOKENS
 
         with self.lock:
@@ -866,7 +870,8 @@ class ApiProviderBackend:
                 raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
             result = _ApiChatHandler(self, connection, model_info["remote_model"])(
                 messages=messages, temperature=0., top_p=1., top_k=1,
-                max_tokens=output, seed=None, thinking=False)
+                max_tokens=output, seed=None, thinking=False,
+                response_format=observation_response_format(ids))
             if self.cancel_event.is_set():
                 raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
             observation = parse_observation(result, ids)
