@@ -174,6 +174,7 @@ class _ApiChatHandler:
         max_tokens: int,
         seed: int | None,
         thinking: bool,
+        response_format: dict[str, Any] | None = None,
         **_unused: Any,
     ) -> dict[str, Any]:
         del top_k, seed
@@ -182,6 +183,8 @@ class _ApiChatHandler:
             "messages": messages,
             "stream": True,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         preset = self.connection.preset
         if preset in {"openai", "gemini", "openrouter"}:
             payload["stream_options"] = {"include_usage": True}
@@ -839,19 +842,37 @@ class ApiProviderBackend:
 
     def scene_models(self) -> list[dict[str, Any]]:
         """Public, secret-free snapshot of connected vision model choices."""
+        import ipaddress
+        from urllib.parse import urlsplit
+
+        def destination(connection):
+            host = urlsplit(connection.base_url).hostname or ""
+            if connection.preset == "custom":
+                if host.lower() in {"localhost", "localhost.localdomain"}:
+                    return "local"
+                try:
+                    address = ipaddress.ip_address(host)
+                    if address.is_loopback or address.is_private:
+                        return "local"
+                except ValueError:
+                    pass
+            return "remote"
         with self._connections_lock:
-            return [dict(model) for connection in self._connections.values()
+            return [{**model, "data_destination": destination(connection)} for connection in self._connections.values()
                     for model in connection.models if model.get("capabilities", {}).get("images")]
 
     def analyze_scene(self, model_info: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
-        from ..scene_analysis import prepare_evidence, observation_messages, parse_observation
+        from ..scene_analysis import prepare_evidence, observation_messages, parse_observation, observation_format
         from ..context import estimate_text_tokens, CONTEXT_SAFETY_TOKENS
 
         with self.lock:
             if not model_info.get("capabilities", {}).get("images"):
                 raise ModelError("SCENE_VISION_REQUIRED", "Choose a vision-capable connected API model in Prompt Writer.")
             connection = self._get_connection(model_info["api_connection_id"])
-            content, ids, image_tokens = prepare_evidence(body)
+            # Qwen3-VL merges 16px vision patches in 2x2 groups; older Qwen VL
+            # uses 28px groups. Unknown provider preprocessing stays estimated.
+            patch_size = 32 if "qwen3" in model_info["remote_model"].lower() else 28
+            content, ids, image_tokens = prepare_evidence(body, patch_size=patch_size)
             messages = observation_messages(content, ids)
             estimated = image_tokens + estimate_text_tokens(messages[0]["content"]) + 512
             context = model_info.get("model_context_limit") or connection.custom_context_tokens
@@ -866,7 +887,8 @@ class ApiProviderBackend:
                 raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
             result = _ApiChatHandler(self, connection, model_info["remote_model"])(
                 messages=messages, temperature=0., top_p=1., top_k=1,
-                max_tokens=output, seed=None, thinking=False)
+                max_tokens=output, seed=None, thinking=False,
+                response_format=observation_format(ids) if connection.compatibility_profile == "lm_studio" else None)
             if self.cancel_event.is_set():
                 raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
             observation = parse_observation(result, ids)

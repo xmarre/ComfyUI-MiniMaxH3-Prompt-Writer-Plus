@@ -18,7 +18,7 @@ FIELDS = {"environment", "shot_type", "framing", "posture", "gaze", "gestures",
           "expression", "lighting", "props", "continuity", "acting", "camera_movement"}
 
 
-def prepare_evidence(body):
+def prepare_evidence(body, *, patch_size=28):
     if body.get("version") != VERSION:
         raise ModelError("SCENE_CONTRACT_VERSION", "Scene analysis requires contract version 1.")
     images = body.get("images")
@@ -45,7 +45,7 @@ def prepare_evidence(body):
         except Exception as exc:
             raise ModelError("SCENE_IMAGES_INVALID", "Invalid or oversized scene image.") from exc
         ids.append(item["id"])
-        tokens += math.ceil(w/28)*math.ceil(h/28)+64
+        tokens += math.ceil(w/patch_size)*math.ceil(h/patch_size)+64
         content += [{"type": "text", "text": f"Evidence {item['id']} at source PTS {str(item.get('pts', 'unknown'))[:80]}"},
                     {"type": "image_url", "image_url": {"url": data}}]
     return content, ids, tokens
@@ -65,6 +65,19 @@ def observation_messages(content, ids):
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": [
         *content, {"type": "text", "text": "Observe this ordered evidence: "+json.dumps(ids)}]}]
+
+
+def observation_format(ids):
+    properties = {
+        "version": {"type": "integer", "enum": [VERSION]},
+        "evidence_ids": {"type": "array", "items": {"type": "string", "enum": ids}, "minItems": len(ids), "maxItems": len(ids)},
+        "observations": {"type": "object", "properties": {k: {"type": ["string", "null"]} for k in sorted(FIELDS)},
+                         "required": sorted(FIELDS), "additionalProperties": False},
+        "subjects": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    }
+    return {"type": "json_schema", "json_schema": {"name": "visual_observations_v1", "strict": True,
+            "schema": {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}}}
 
 
 def validate_observation(value, evidence_ids):
@@ -96,7 +109,12 @@ def parse_observation(result, ids):
     if result.get("stream_finish_reason", choice.get("finish_reason")) != "stop":
         raise ModelError("SCENE_RESPONSE_TRUNCATED", "Scene observations did not finish normally; partial output was discarded.")
     try:
-        value = json.loads(choice["message"]["content"])
+        content = choice["message"]["content"].strip()
+        # Accept complete, conventional envelopes only. Never search arbitrary
+        # prose for a JSON substring or repair unfinished model output.
+        content = re.sub(r"^<think>.*?</think>\s*", "", content, count=1, flags=re.DOTALL)
+        fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", content, flags=re.DOTALL)
+        value = json.loads(fence[1] if fence else content)
     except (ValueError, KeyError, TypeError) as exc:
         raise ModelError("SCENE_RESPONSE_INVALID", "The model did not return a complete JSON observation.") from exc
     return validate_observation(value, ids)
