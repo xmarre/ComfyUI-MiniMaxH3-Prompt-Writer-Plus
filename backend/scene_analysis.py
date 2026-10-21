@@ -45,10 +45,31 @@ def prepare_evidence(body):
         except Exception as exc:
             raise ModelError("SCENE_IMAGES_INVALID", "Invalid or oversized scene image.") from exc
         ids.append(item["id"])
-        tokens += math.ceil(w/28)*math.ceil(h/28)+64
+        tokens += math.ceil(w/28)*math.ceil(h/28)+64  # Conservative for Qwen3-VL's 32px compression.
         content += [{"type": "text", "text": f"Evidence {item['id']} at source PTS {str(item.get('pts', 'unknown'))[:80]}"},
                     {"type": "image_url", "image_url": {"url": data}}]
     return content, ids, tokens
+
+
+def observation_response_format(evidence_ids):
+    """Strict OpenAI-compatible JSON schema for local LM Studio chat completions."""
+    observations = {name: {"type": ["string", "null"]} for name in sorted(FIELDS)}
+    return {"type": "json_schema", "json_schema": {
+        "name": "visual_observations_v1", "strict": True,
+        "schema": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "version": {"type": "integer", "enum": [VERSION]},
+                "evidence_ids": {"type": "array", "items": {"type": "string"},
+                                 "minItems": len(evidence_ids), "maxItems": len(evidence_ids)},
+                "observations": {"type": "object", "properties": observations,
+                                 "required": sorted(FIELDS), "additionalProperties": False},
+                "subjects": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            "required": ["version", "evidence_ids", "observations", "subjects", "confidence"],
+        },
+    }}
 
 
 def observation_messages(content, ids):
@@ -96,7 +117,15 @@ def parse_observation(result, ids):
     if result.get("stream_finish_reason", choice.get("finish_reason")) != "stop":
         raise ModelError("SCENE_RESPONSE_TRUNCATED", "Scene observations did not finish normally; partial output was discarded.")
     try:
-        value = json.loads(choice["message"]["content"])
+        content = choice["message"]["content"]
+        if not isinstance(content, str):
+            raise ValueError("missing model text")
+        text = content.strip()
+        # Some local models wrap an otherwise complete response in one
+        # Markdown JSON fence. Keep strict parsing and schema validation.
+        if text.startswith("```json\n") or text.startswith("```\n"):
+            text = re.sub(r"^\`{3}(?:json)?\s*\n|\n\`{3}\s*$", "", text, flags=re.I)
+        value = json.loads(text)
     except (ValueError, KeyError, TypeError) as exc:
         raise ModelError("SCENE_RESPONSE_INVALID", "The model did not return a complete JSON observation.") from exc
     return validate_observation(value, ids)
