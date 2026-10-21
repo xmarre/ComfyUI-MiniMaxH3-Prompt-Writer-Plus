@@ -71,7 +71,7 @@ class SceneAnalysisTests(unittest.TestCase):
     def test_local_structured_output_and_fenced_reply(self):
         backend,model=self.backend()
         backend._connections['connection'].compatibility_profile='lm_studio'
-        result={'choices':[{'message':{'content':'```json\\n'+json.dumps(observation())+'\\n```'},'finish_reason':'stop'}]}
+        result={'choices':[{'message':{'content':'```json\n'+json.dumps(observation())+'\n```'},'finish_reason':'stop'}]}
         with patch.object(backend,'_request_chat_completion_stream',return_value=result) as stream:
             backend.prepare_request()
             record=backend.analyze_scene(model,evidence())
@@ -87,5 +87,5 @@ class SceneAnalysisTests(unittest.TestCase):
     def test_fenced_json_does_not_relax_schema_validation(self):
         bad=observation()
         bad['observations']['acting']='<d>[English] fake dialogue</d>'
-        result={'choices':[{'message':{'content':'```json\\n'+json.dumps(bad)+'\\n```'},'finish_reason':'stop'}]}
+        result={'choices':[{'message':{'content':'```json\n'+json.dumps(bad)+'\n```'},'finish_reason':'stop'}]}
         with self.assertRaises(ModelError):parse_observation(result,['a'*64])
