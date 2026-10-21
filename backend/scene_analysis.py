@@ -121,6 +121,14 @@ def parse_observation(result, ids):
         if not isinstance(content, str):
             raise ValueError("missing model text")
         text = content.strip()
+        # Local reasoning-capable vision models sometimes embed a complete
+        # <think> prefix in the content field. Ignore only a closed prefix;
+        # partial/unclosed reasoning and all malformed JSON still fail closed.
+        if text.startswith("<think>"):
+            ending = text.find("</think>")
+            if ending < 0:
+                raise ValueError("unfinished model reasoning")
+            text = text[ending + len("</think>"):].strip()
         # Some local models wrap an otherwise complete response in one
         # Markdown JSON fence. Keep strict parsing and schema validation.
         if text.startswith("```json\n") or text.startswith("```\n"):
