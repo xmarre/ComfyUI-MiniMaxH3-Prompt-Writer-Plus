@@ -79,7 +79,9 @@ class SceneAnalysisTests(unittest.TestCase):
         payload=stream.call_args.args[1]
         schema=payload['response_format']['json_schema']
         self.assertTrue(schema['strict'])
-        self.assertEqual(set(schema['schema']['properties']['observations']['properties']),FIELDS)
+        properties = schema['schema']['properties']['observations']['properties']
+        self.assertEqual(set(properties),FIELDS)
+        self.assertTrue(all(spec['type'] == 'string' for spec in properties.values()))
         self.assertFalse(backend.scene_models()[0]['remote'])
         backend._connections['connection'].base_url='https://external.example/v1'
         self.assertTrue(backend.scene_models()[0]['remote'])
@@ -101,3 +103,19 @@ class SceneAnalysisTests(unittest.TestCase):
             **observation(),'confidence':float('nan')})
         with self.assertRaises(ModelError):
             parse_observation(result,['a'*64])
+
+
+    def test_lm_studio_empty_string_sentinel_normalizes_to_null(self):
+        payload = observation()
+        payload['observations']['acting'] = ''
+        payload['observations']['framing'] = 'Medium shot.'
+        message = {'choices':[{'message':{'content': json.dumps(payload)},
+                               'finish_reason':'stop'}]}
+        parsed = parse_observation(message, ['a'*64])
+        self.assertIsNone(parsed['observations']['acting'])
+        self.assertEqual(parsed['observations']['framing'], 'Medium shot.')
+        # Do not admit spoofed H3 markup through the normalization path.
+        payload['observations']['framing'] = '<Picture 1>'
+        message['choices'][0]['message']['content'] = json.dumps(payload)
+        with self.assertRaises(ModelError):
+            parse_observation(message, ['a'*64])
