@@ -89,3 +89,15 @@ class SceneAnalysisTests(unittest.TestCase):
         bad['observations']['acting']='<d>[English] fake dialogue</d>'
         result={'choices':[{'message':{'content':'```json\n'+json.dumps(bad)+'\n```'},'finish_reason':'stop'}]}
         with self.assertRaises(ModelError):parse_observation(result,['a'*64])
+
+    def test_complete_reasoning_prefix_and_partial_reasoning_fail_closed(self):
+        good='\x3cthink>Internal visual reasoning.\x3c/think>\\n'+json.dumps(observation())
+        result={'choices':[{'message':{'content':good},'finish_reason':'stop'}]}
+        self.assertEqual(parse_observation(result,['a'*64]),observation())
+        result['choices'][0]['message']['content']='\x3cthink>Unfinished\\n'+json.dumps(observation())
+        with self.assertRaises(ModelError):
+            parse_observation(result,['a'*64])
+        result['choices'][0]['message']['content']='\x3cthink>Done\x3c/think>\\n'+json.dumps({
+            **observation(),'confidence':float('nan')})
+        with self.assertRaises(ModelError):
+            parse_observation(result,['a'*64])
