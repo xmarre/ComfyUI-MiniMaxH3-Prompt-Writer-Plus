@@ -174,6 +174,7 @@ class _ApiChatHandler:
         max_tokens: int,
         seed: int | None,
         thinking: bool,
+        response_format: dict[str, Any] | None = None,
         **_unused: Any,
     ) -> dict[str, Any]:
         del top_k, seed
@@ -183,6 +184,8 @@ class _ApiChatHandler:
             "stream": True,
         }
         preset = self.connection.preset
+        if response_format is not None and preset == "custom" and self.connection.compatibility_profile == "lm_studio":
+            payload["response_format"] = response_format
         if preset in {"openai", "gemini", "openrouter"}:
             payload["stream_options"] = {"include_usage": True}
         if preset == "openai":
@@ -833,8 +836,48 @@ class ApiProviderBackend:
             self._provider_request_ids.append(request_id)
         return {
             "choices": [{"message": {"content": content}, "finish_reason": finish_reason or "stop"}],
+            "stream_finish_reason": finish_reason,
             "usage": usage,
         }
+
+    def scene_models(self) -> list[dict[str, Any]]:
+        """Public, secret-free snapshot of connected vision model choices."""
+        with self._connections_lock:
+            return [{**model, "remote": not _is_loopback(urlsplit(connection.base_url).hostname or "")}
+                    for connection in self._connections.values()
+                    for model in connection.models if model.get("capabilities", {}).get("images")]
+
+    def analyze_scene(self, model_info: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+        from ..scene_analysis import prepare_evidence, observation_messages, parse_observation, observation_response_format
+        from ..context import estimate_text_tokens, CONTEXT_SAFETY_TOKENS
+
+        with self.lock:
+            if not model_info.get("capabilities", {}).get("images"):
+                raise ModelError("SCENE_VISION_REQUIRED", "Choose a vision-capable connected API model in Prompt Writer.")
+            connection = self._get_connection(model_info["api_connection_id"])
+            content, ids, image_tokens = prepare_evidence(body)
+            messages = observation_messages(content, ids)
+            estimated = image_tokens + estimate_text_tokens(messages[0]["content"]) + 512
+            context = model_info.get("model_context_limit") or connection.custom_context_tokens
+            requested = body.get("context_budget", 8192)
+            if type(requested) is not int or not 2048 <= requested <= 49152:
+                raise ModelError("SCENE_CONTEXT_INVALID", "Scene context budget must be 2048–49152 tokens.")
+            limit = min(requested, context) if context else requested
+            output = min(2048, model_info.get("max_output_tokens") or 2048)
+            if estimated + output + CONTEXT_SAFETY_TOKENS > limit:
+                raise ModelError("CONTEXT_BUDGET_EXCEEDED", "Scene evidence exceeds the observation context budget. Reduce image MP or the per-shot image limit.")
+            if self.cancel_event.is_set():
+                raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
+            result = _ApiChatHandler(self, connection, model_info["remote_model"])(
+                messages=messages, temperature=0., top_p=1., top_k=1,
+                max_tokens=output, seed=None, thinking=False,
+                response_format=observation_response_format(ids))
+            if self.cancel_event.is_set():
+                raise ModelError("GENERATION_CANCELLED", "Scene analysis cancelled.")
+            observation = parse_observation(result, ids)
+            return {"version": 1, "model_id": model_info["id"], "observation": observation,
+                    "estimated_input_tokens": estimated, "context_tokens": limit,
+                    "server_managed_lifecycle": True}
 
     def generate(
         self,
