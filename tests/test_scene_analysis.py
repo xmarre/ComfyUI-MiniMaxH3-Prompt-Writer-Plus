@@ -176,3 +176,21 @@ class SceneAnalysisTests(unittest.TestCase):
         message['choices'][0]['message']['content'] = json.dumps(payload)
         with self.assertRaises(ModelError):
             parse_observation(message, ['a'*64])
+
+    def test_subject_prompt_requests_visible_complexion_without_ancestry_inference(self):
+        from backend.scene_analysis import observation_messages
+        system=observation_messages([],['a'*64])[0]['content']
+        for expected in [
+            'visible skin tone/complexion',
+            'facial hair',
+            'hair texture/color',
+            'dark-brown skin',
+            'Do not infer a person\'s nationality, ethnic ancestry',
+        ]:
+            self.assertIn(expected,system)
+        item=observation()
+        item['subjects']=[
+            'Adult man with dark-brown skin, short dark hair and beard, '
+            'wearing a light-purple shirt with a patterned tie.'
+        ]
+        self.assertEqual(validate_observation(item,['a'*64]),item)

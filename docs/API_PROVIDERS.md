@@ -114,3 +114,8 @@ connection store and are not included in capability responses or project data.
 The companion Continuum Plus scene workspace is PR #83. This API layer is
 independent of the State Manager contribution stack; keep that stack's existing
 order and apply this layer afterward when using both integrations.
+
+
+### Visually grounded subject descriptors
+
+The scene-observation vision instruction explicitly asks for **visible** complexion/skin tone, hairstyle, hair texture and color, facial hair, approximate age range, wardrobe and position where supported by the screenshot. A terse generic `person with short hair` is insufficient when distinguishing features are clearly visible. The model must not infer ethnic ancestry, nationality, religion or the identity of the actor from a still frame. Detailed subject observations remain reviewable evidence; Continuum's H3 composer adds only brief, user-approved shot/Picture cues, not full subject paragraphs or a replacement of the identity references.
