@@ -105,6 +105,63 @@ class SceneAnalysisTests(unittest.TestCase):
             parse_observation(result,['a'*64])
 
 
+    def test_one_still_schema_forbids_motion_and_binds_evidence_ids(self):
+        schema = observation_response_format(['a'*64])['json_schema']['schema']
+        ids = schema['properties']['evidence_ids']
+        self.assertEqual(ids['items']['enum'], ['a'*64])
+        movement = schema['properties']['observations']['properties']['camera_movement']
+        self.assertEqual(movement['type'], 'string')
+        self.assertEqual(movement['enum'], [''])
+        msg = __import__('backend.scene_analysis', fromlist=['observation_messages']).observation_messages([], ['a'*64])[0]['content']
+        self.assertIn('camera_movement field MUST be an empty string', msg)
+        other = observation_response_format(['a'*64, 'b'*64])['json_schema']['schema']
+        self.assertNotIn('enum', other['properties']['observations']['properties']['camera_movement'])
+
+    def test_lm_studio_nonempty_single_still_motion_is_discarded_not_accepted(self):
+        for hallucinated_motion in [
+            'Camera pans left',
+            'Locked-off static camera',
+            'A tracking shot follows the actor.',
+        ]:
+            response=observation()
+            response['observations']['camera_movement'] = hallucinated_motion
+            response['observations']['framing'] = 'Medium-wide, seated person by a window.'
+            result={'choices':[{'message':{'content':json.dumps(response)},'finish_reason':'stop'}]}
+            parsed=parse_observation(result,['a'*64])
+            self.assertIsNone(parsed['observations']['camera_movement'])
+            self.assertEqual(parsed['observations']['framing'],'Medium-wide, seated person by a window.')
+            self.assertEqual(parsed['evidence_ids'],['a'*64])
+            # Direct non-normalizing validation still blocks unsupported
+            # motion, so persistence cannot bypass the safety invariant.
+            with self.assertRaisesRegex(ModelError,'camera movement is unsupported'):
+                validate_observation(response,['a'*64])
+
+    def test_real_visual_schema_incompatibilities_report_field_not_model_text(self):
+        for mutator, expected in [
+            (lambda o:o.update(evidence_ids=['b'*64]),'evidence IDs'),
+            (lambda o:o['observations'].update(framing='<Picture 4>'),'framing'),
+            (lambda o:o.update(confidence=1.5),'confidence'),
+            (lambda o:o.update(garbage='extra'), 'top-level schema'),
+        ]:
+            payload=observation()
+            mutator(payload)
+            reply={'choices':[{'message':{'content':json.dumps(payload)},'finish_reason':'stop'}]}
+            with self.assertRaises(ModelError) as error:
+                parse_observation(reply,['a'*64])
+            self.assertIn(expected,error.exception.message)
+            self.assertNotIn('b'*64,error.exception.message)
+            self.assertNotIn('<Picture',error.exception.message)
+
+    def test_multi_image_motion_allowed_only_with_matching_ordered_evidence(self):
+        record=observation()
+        record['evidence_ids']=['a'*64, 'b'*64]
+        record['observations']['camera_movement']='Between the two ordered stills, framing shifts left.'
+        result={'choices':[{'message':{'content':json.dumps(record)},'finish_reason':'stop'}]}
+        self.assertEqual(parse_observation(result,['a'*64,'b'*64])['observations']['camera_movement'],
+                         record['observations']['camera_movement'])
+        with self.assertRaisesRegex(ModelError,'evidence IDs'):
+            parse_observation(result,['b'*64,'a'*64])
+
     def test_lm_studio_empty_string_sentinel_normalizes_to_null(self):
         payload = observation()
         payload['observations']['acting'] = ''
