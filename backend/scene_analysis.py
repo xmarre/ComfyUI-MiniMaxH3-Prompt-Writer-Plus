@@ -136,9 +136,7 @@ def validate_observation(value, evidence_ids):
     if not isinstance(obs, dict) or set(obs) != FIELDS:
         invalid("observation field set")
     def text_ok(text):
-        return isinstance(text, str) and len(text) <= 1200 and not re.search(
-            r"[<>]|\\[\\d|\\b(?:S\\d+|Picture\\s+\\d+)\\b", text
-        )
+        return isinstance(text, str) and len(text) <= 1200 and not re.search(r"[<>]|\[\d|\b(?:S\d+|Picture\s+\d+)\b", text)
     for field, text in obs.items():
         if text is not None and not text_ok(text):
             invalid("unsafe markup, length, or type in observation: " + field)
